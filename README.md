@@ -1,132 +1,81 @@
-# Zendesk API MCP Server
+# Zendesk MCP Server (Hardened Fork)
 
-    A comprehensive Model Context Protocol (MCP) server for interacting with the Zendesk API. This server provides tools and resources for managing Zendesk Support, Talk, Chat, and Guide products.
+Security-hardened fork of [mattcoatsworth/zendesk-mcp-server](https://github.com/mattcoatsworth/zendesk-mcp-server) with reduced tool surface, dependency fixes, and Azure Container Apps deployment support.
 
-    ## Features
+## Changes from Original
 
-    - Complete coverage of Zendesk API functionality
-    - Tools for managing tickets, users, organizations, and more
-    - Resources for accessing Zendesk API documentation
-    - Secure authentication with Zendesk API tokens
+- **Tool surface reduced from 49 to 9** (tickets + articles + search only)
+- **All DELETE operations removed**
+- **All user/org/group/macro/view/trigger/automation tools removed**
+- **Dependencies updated** (0 known vulnerabilities)
+- **HTTP/SSE transport added** for remote deployment
+- **Rate limiting** (configurable, default 200 req/min)
+- **Input validation bounds** (per_page, string lengths)
+- **Error sanitization** (no raw API data leaked)
+- **Subdomain validation** (SSRF prevention)
+- **Docker + Azure Bicep + GitHub Actions CI/CD**
 
-    ## Getting Started
+## Available Tools
 
-    ### Prerequisites
+| Tool | Type | Description |
+|------|------|-------------|
+| `list_tickets` | Read | List tickets with pagination |
+| `get_ticket` | Read | Get ticket by ID |
+| `create_ticket` | Write | Create a new ticket |
+| `update_ticket` | Write | Update an existing ticket |
+| `list_articles` | Read | List Help Center articles |
+| `get_article` | Read | Get article by ID |
+| `create_article` | Write | Create a Help Center article |
+| `update_article` | Write | Update an existing article |
+| `search` | Read | Search across Zendesk data |
 
-    - Node.js 14 or higher
-    - A Zendesk account with API access
+## Quick Start
 
-    ### Installation
+### Local (stdio mode for Cursor/Claude Desktop)
 
-    1. Clone this repository
-    2. Install dependencies:
-       ```
-       npm install
-       ```
-    3. Create a `.env` file with your Zendesk credentials:
-       ```
-       ZENDESK_SUBDOMAIN=your-subdomain
-       ZENDESK_EMAIL=your-email@example.com
-       ZENDESK_API_TOKEN=your-api-token
-       ```
+```bash
+cp .env.example .env
+# Edit .env with your Zendesk credentials
+npm install
+npm start
+```
 
-    ### Running the Server
+### Local (HTTP/SSE mode for testing remote transport)
 
-    Start the server:
-    ```
-    npm start
-    ```
+```bash
+npm run start:http
+# Server at http://localhost:8000/sse
+# Health check at http://localhost:8000/health
+```
 
-    For development with auto-restart:
-    ```
-    npm run dev
-    ```
+### Docker
 
-    ### Testing with MCP Inspector
+```bash
+docker build -t zendesk-mcp-server .
+docker run -p 8000:8000 \
+  -e ZENDESK_SUBDOMAIN=your-subdomain \
+  -e ZENDESK_EMAIL=your-email@example.com \
+  -e ZENDESK_API_TOKEN=your-api-token \
+  zendesk-mcp-server
+```
 
-    Test the server using the MCP Inspector:
-    ```
-    npm run inspect
-    ```
+## Configuration
 
-    ## Available Tools
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ZENDESK_SUBDOMAIN` | (required) | Your Zendesk subdomain |
+| `ZENDESK_EMAIL` | (required) | Zendesk agent email |
+| `ZENDESK_API_TOKEN` | (required) | Zendesk API token |
+| `MCP_TRANSPORT` | `stdio` | Transport: `stdio` or `http` |
+| `MCP_HTTP_PORT` | `8000` | HTTP server port |
+| `MCP_HTTP_HOST` | `0.0.0.0` | HTTP server host |
+| `DISABLED_TOOLS` | (empty) | Comma-separated tool names to disable |
+| `ZENDESK_RATE_LIMIT` | `200` | Max Zendesk API calls per minute |
 
-    ### Tickets
-    - `list_tickets`: List tickets in Zendesk
-    - `get_ticket`: Get a specific ticket by ID
-    - `create_ticket`: Create a new ticket
-    - `update_ticket`: Update an existing ticket
-    - `delete_ticket`: Delete a ticket
+## Azure Deployment
 
-    ### Users
-    - `list_users`: List users in Zendesk
-    - `get_user`: Get a specific user by ID
-    - `create_user`: Create a new user
-    - `update_user`: Update an existing user
-    - `delete_user`: Delete a user
+See `deployment/azure/bicep/main.bicep` for infrastructure-as-code and `.github/workflows/release.yml` for CI/CD.
 
-    ### Organizations
-    - `list_organizations`: List organizations in Zendesk
-    - `get_organization`: Get a specific organization by ID
-    - `create_organization`: Create a new organization
-    - `update_organization`: Update an existing organization
-    - `delete_organization`: Delete an organization
+## Security
 
-    ### Groups
-    - `list_groups`: List agent groups in Zendesk
-    - `get_group`: Get a specific group by ID
-    - `create_group`: Create a new agent group
-    - `update_group`: Update an existing group
-    - `delete_group`: Delete a group
-
-    ### Macros
-    - `list_macros`: List macros in Zendesk
-    - `get_macro`: Get a specific macro by ID
-    - `create_macro`: Create a new macro
-    - `update_macro`: Update an existing macro
-    - `delete_macro`: Delete a macro
-
-    ### Views
-    - `list_views`: List views in Zendesk
-    - `get_view`: Get a specific view by ID
-    - `create_view`: Create a new view
-    - `update_view`: Update an existing view
-    - `delete_view`: Delete a view
-
-    ### Triggers
-    - `list_triggers`: List triggers in Zendesk
-    - `get_trigger`: Get a specific trigger by ID
-    - `create_trigger`: Create a new trigger
-    - `update_trigger`: Update an existing trigger
-    - `delete_trigger`: Delete a trigger
-
-    ### Automations
-    - `list_automations`: List automations in Zendesk
-    - `get_automation`: Get a specific automation by ID
-    - `create_automation`: Create a new automation
-    - `update_automation`: Update an existing automation
-    - `delete_automation`: Delete an automation
-
-    ### Search
-    - `search`: Search across Zendesk data
-
-    ### Help Center
-    - `list_articles`: List Help Center articles
-    - `get_article`: Get a specific Help Center article by ID
-    - `create_article`: Create a new Help Center article
-    - `update_article`: Update an existing Help Center article
-    - `delete_article`: Delete a Help Center article
-
-    ### Talk
-    - `get_talk_stats`: Get Zendesk Talk statistics
-
-    ### Chat
-    - `list_chats`: List Zendesk Chat conversations
-
-    ## Available Resources
-
-    - `zendesk://docs/{section}`: Access documentation for different sections of the Zendesk API
-
-    ## License
-
-    MIT
+See [SECURITY_REPORT.md](SECURITY_REPORT.md) for the full compliance and security assessment.

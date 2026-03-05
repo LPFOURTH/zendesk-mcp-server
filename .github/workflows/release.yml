@@ -1,0 +1,105 @@
+name: Build, Scan & Deploy Zendesk MCP Server
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  AZURE_RESOURCE_GROUP: fourth-zendesk-prod
+  AZURE_CONTAINER_REGISTRY: fourthzendeskzap
+  AZURE_CONTAINER_APP: fourth-zendesk-mcp-server
+  AZURE_LOCATION: northeurope
+
+jobs:
+  build-and-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run npm audit
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
+      - name: Extract version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Login to ACR
+        run: az acr login --name ${{ env.AZURE_CONTAINER_REGISTRY }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.AZURE_CONTAINER_REGISTRY }}.azurecr.io/${{ env.AZURE_CONTAINER_APP }}:${{ steps.version.outputs.version }}
+            ${{ env.AZURE_CONTAINER_REGISTRY }}.azurecr.io/${{ env.AZURE_CONTAINER_APP }}:latest
+          cache-from: type=registry,ref=${{ env.AZURE_CONTAINER_REGISTRY }}.azurecr.io/${{ env.AZURE_CONTAINER_APP }}:buildcache
+          cache-to: type=registry,ref=${{ env.AZURE_CONTAINER_REGISTRY }}.azurecr.io/${{ env.AZURE_CONTAINER_APP }}:buildcache,mode=max
+
+      - name: Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: '${{ env.AZURE_CONTAINER_REGISTRY }}.azurecr.io/${{ env.AZURE_CONTAINER_APP }}:${{ steps.version.outputs.version }}'
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
+
+  deploy:
+    needs: build-and-scan
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy to Azure Container Apps
+        run: |
+          DEPLOY_TIME=$(date +%s)
+          az containerapp update \
+            --name ${{ env.AZURE_CONTAINER_APP }} \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --image ${{ env.AZURE_CONTAINER_REGISTRY }}.azurecr.io/${{ env.AZURE_CONTAINER_APP }}:${{ steps.version.outputs.version }} \
+            --set-env-vars "DEPLOY_VERSION=${{ steps.version.outputs.version }}" "DEPLOY_TIME=${DEPLOY_TIME}" \
+            --output none
+
+      - name: Verify deployment
+        run: |
+          sleep 30
+          for i in $(seq 1 6); do
+            RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+              "https://${{ env.AZURE_CONTAINER_APP }}.northeurope.azurecontainerapps.io/health" \
+              --max-time 10) || true
+            if [ "$RESPONSE" = "200" ]; then
+              echo "Deployment verified - health check passed"
+              exit 0
+            fi
+            echo "Attempt $i: HTTP $RESPONSE, retrying in 20s..."
+            sleep 20
+          done
+          echo "WARNING: Health check did not return 200 after 6 attempts"
+          exit 1

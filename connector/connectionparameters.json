@@ -1,0 +1,15 @@
+{
+  "api_key": {
+    "type": "securestring",
+    "uiDefinition": {
+      "displayName": "ZendeskAuthToken",
+      "description": "Your Zendesk authorization token. Use 'Bearer <oauth_token>' for OAuth, or 'Basic <base64(email/token:api_token)>' for API token auth.",
+      "tooltip": "Provide your Zendesk authorization token",
+      "constraints": {
+        "tabIndex": 2,
+        "clearText": false,
+        "required": "true"
+      }
+    }
+  }
+}

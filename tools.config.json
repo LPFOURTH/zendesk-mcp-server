@@ -1,0 +1,90 @@
+{
+  "_description": "Zendesk MCP Server - Tool Configuration",
+  "_usage": "Set 'enabled: false' to disable a tool. Server reads this at startup.",
+
+  "tools": {
+    "list_tickets": {
+      "enabled": true,
+      "category": "tickets",
+      "operation": "read",
+      "description": "List tickets in Zendesk with pagination"
+    },
+    "get_ticket": {
+      "enabled": true,
+      "category": "tickets",
+      "operation": "read",
+      "description": "Get a specific ticket by ID"
+    },
+    "create_ticket": {
+      "enabled": true,
+      "category": "tickets",
+      "operation": "write",
+      "description": "Create a new support ticket"
+    },
+    "update_ticket": {
+      "enabled": true,
+      "category": "tickets",
+      "operation": "write",
+      "description": "Update an existing ticket"
+    },
+    "list_articles": {
+      "enabled": true,
+      "category": "help_center",
+      "operation": "read",
+      "description": "List Help Center articles with pagination"
+    },
+    "get_article": {
+      "enabled": true,
+      "category": "help_center",
+      "operation": "read",
+      "description": "Get a specific Help Center article by ID"
+    },
+    "create_article": {
+      "enabled": true,
+      "category": "help_center",
+      "operation": "write",
+      "description": "Create a new Help Center article"
+    },
+    "update_article": {
+      "enabled": true,
+      "category": "help_center",
+      "operation": "write",
+      "description": "Update an existing Help Center article"
+    },
+    "search": {
+      "enabled": true,
+      "category": "search",
+      "operation": "read",
+      "description": "Search across Zendesk tickets, articles, and more"
+    },
+    "create_release_note": {
+      "enabled": true,
+      "category": "release_notes",
+      "operation": "write",
+      "description": "Create a release note article from structured markdown using UK or US template"
+    }
+  },
+
+  "presets": {
+    "read_only": {
+      "_description": "Only read operations - safest mode",
+      "enable": ["list_tickets", "get_ticket", "list_articles", "get_article", "search"],
+      "disable": ["create_ticket", "update_ticket", "create_article", "update_article"]
+    },
+    "full": {
+      "_description": "All available tools (read + write, still no delete)",
+      "enable": ["list_tickets", "get_ticket", "create_ticket", "update_ticket", "list_articles", "get_article", "create_article", "update_article", "search", "create_release_note"],
+      "disable": []
+    },
+    "tickets_only": {
+      "_description": "Only ticket operations",
+      "enable": ["list_tickets", "get_ticket", "create_ticket", "update_ticket", "search"],
+      "disable": ["list_articles", "get_article", "create_article", "update_article"]
+    },
+    "articles_only": {
+      "_description": "Only Help Center article operations",
+      "enable": ["list_articles", "get_article", "create_article", "update_article", "search", "create_release_note"],
+      "disable": ["list_tickets", "get_ticket", "create_ticket", "update_ticket"]
+    }
+  }
+}
