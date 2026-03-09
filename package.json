@@ -1,6 +1,6 @@
 {
   "name": "zendesk-mcp-server",
-  "version": "1.2.0",
+  "version": "1.4.0",
   "type": "module",
   "description": "Hardened MCP Server for Zendesk API - Tickets & Articles (read/create/update)",
   "main": "src/index.js",
@@ -11,12 +11,19 @@
     "start": "node src/index.js",
     "start:http": "node src/index.js --transport http",
     "dev": "node --watch src/index.js",
-    "inspect": "npx -y @modelcontextprotocol/inspector node src/index.js"
+    "inspect": "npx -y @modelcontextprotocol/inspector node src/index.js",
+    "test:targeting": "node tests/zendesk-targeting.mjs",
+    "test:regression": "node tests/regression.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
     "axios": "^1.8.4",
     "dotenv": "^16.4.7",
     "zod": "^3.24.2"
+  },
+  "overrides": {
+    "@hono/node-server": "^1.19.10",
+    "express-rate-limit": "^8.2.2",
+    "hono": "^4.12.4"
   }
 }

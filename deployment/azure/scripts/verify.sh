@@ -5,7 +5,7 @@ set -euo pipefail
 # Verify deployment: health check + MCP initialize handshake
 # ============================================================
 
-RESOURCE_GROUP="fourth-zendesk-prod"
+RESOURCE_GROUP="fourth-ai-prod"
 APP_NAME="fourth-zendesk-mcp-server"
 
 FQDN=$(az containerapp show \

@@ -6,7 +6,7 @@ set -euo pipefail
 # Usage: ./update-env.sh KEY=VALUE [KEY2=VALUE2 ...]
 # ============================================================
 
-RESOURCE_GROUP="fourth-zendesk-prod"
+RESOURCE_GROUP="fourth-ai-prod"
 APP_NAME="fourth-zendesk-mcp-server"
 
 if [ $# -eq 0 ]; then

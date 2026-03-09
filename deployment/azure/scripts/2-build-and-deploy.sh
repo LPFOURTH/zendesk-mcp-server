@@ -6,9 +6,9 @@ set -euo pipefail
 # Run this to deploy a new version.
 # ============================================================
 
-RESOURCE_GROUP="fourth-zendesk-prod"
-ACR_NAME="fourthzendeskzap"
-ENVIRONMENT_NAME="fourth-zendesk-env"
+RESOURCE_GROUP="fourth-ai-prod"
+ACR_NAME="fourthzendeskmcp"
+ENVIRONMENT_NAME="fourth-ai-env"
 APP_NAME="fourth-zendesk-mcp-server"
 IMAGE_TAG="${1:-latest}"
 

@@ -6,8 +6,8 @@ set -euo pipefail
 # Run AFTER you've created the DNS records.
 # ============================================================
 
-RESOURCE_GROUP="fourth-zendesk-prod"
-ENVIRONMENT_NAME="fourth-zendesk-env"
+RESOURCE_GROUP="fourth-ai-prod"
+ENVIRONMENT_NAME="fourth-ai-env"
 APP_NAME="fourth-zendesk-mcp-server"
 CUSTOM_DOMAIN="${1:-zendesk-mcp.fourth.com}"
 

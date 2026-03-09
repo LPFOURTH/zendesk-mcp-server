@@ -1,47 +1,47 @@
-# Zendesk MCP — CoPilot Studio Connector
+# Zendesk MCP Connector
 
-These files define the Power Platform custom connector for the Zendesk MCP server,
-following the same pattern as the Rally MCP connector.
+Use these files to create the Power Platform custom connector that fronts the Zendesk MCP server in Copilot Studio.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `openapidefinition.json` | Swagger/OpenAPI definition imported into Power Platform |
-| `connectionparameters.json` | Defines per-user credential prompt (securestring) |
+| `openapidefinition.json` | Swagger definition to import into Power Platform |
+| `connectionparameters.json` | Per-user `Authorization` header secret |
+
+## Request Model
+
+Each request can provide:
+
+- `Authorization`: the user's Zendesk auth header
+- `zendesk-subdomain`: optional Zendesk target, such as `fourthsandbox`
+- `zendesk-base-url`: optional full Zendesk host, such as `https://fourthsandbox.zendesk.com`
+
+The server also accepts `x-zendesk-subdomain` and `x-zendesk-base-url`, but Copilot Studio custom connectors typically surface the non-`X-` names more reliably.
 
 ## How Per-User Auth Works
 
-```
-User → CoPilot Studio → Power Platform connector → Zendesk MCP Server → Zendesk API
-                         ↑                          ↑
-                   Injects user's stored       Reads Authorization header,
-                   token into Authorization    forwards to Zendesk API.
-                   header automatically.       Falls back to env vars if
-                                               no header present.
-```
+1. Import `openapidefinition.json` and `connectionparameters.json` into Power Platform.
+2. Each user creates their own connection and stores an `Authorization` value.
+3. In the Copilot Studio action, keep `connectionProperties.mode: Invoker`.
+4. The server forwards the request `Authorization` header to Zendesk. If no auth header is present, local `.env` credentials are used as a fallback.
 
-1. **Connector import** — Import `openapidefinition.json` as a custom connector in Power Platform.
-2. **Connection creation** — Each user creates a personal connection, entering their Zendesk auth token.
-3. **Action config** — In the agent action, set `connectionProperties.mode: Invoker`.
-4. **Server behavior** — The MCP server reads the `Authorization` header from each request and uses it
-   for Zendesk API calls. If no header is present (e.g., local dev), it falls back to env vars.
+## Auth Header Formats
 
-## Auth Token Formats
+OAuth bearer token:
 
-Users can provide their token in either format:
-
-### Option A: OAuth Bearer Token (recommended)
-```
+```text
 Bearer <zendesk_oauth_token>
 ```
-Requires a Zendesk OAuth application. Tokens are scoped per-user.
 
-### Option B: API Token (Basic Auth)
+API token via Basic auth:
+
+```text
+Basic <base64(email/token:api_token)>
 ```
-Basic <base64_encoded>
-```
-Where the base64 value encodes `email/token:api_token`. Generate with:
+
+Generate the Basic value with:
+
 ```bash
 echo -n "user@example.com/token:your_api_token" | base64
 ```
@@ -49,7 +49,6 @@ echo -n "user@example.com/token:your_api_token" | base64
 ## Copilot Studio Action YAML
 
 ```yaml
-connectionReference: auto_agent_W5SKI.shared_fourth-zendesk-mcp.<guid>
 connectionProperties:
   mode: Invoker
 
@@ -57,3 +56,17 @@ operationDetails:
   kind: ModelContextProtocolMetadata
   operationId: InvokeServer
 ```
+
+## Sandbox vs Prod
+
+Use one server instance for both environments by supplying either:
+
+- `zendesk-subdomain: your-prod-subdomain`
+- `zendesk-subdomain: your-sandbox-subdomain`
+
+or:
+
+- `zendesk-base-url: https://your-prod-subdomain.zendesk.com`
+- `zendesk-base-url: https://your-sandbox-subdomain.zendesk.com`
+
+If neither target header is sent, the server falls back to `ZENDESK_SUBDOMAIN` or `ZENDESK_BASE_URL` from the environment.

@@ -6,12 +6,12 @@ set -euo pipefail
 # Run this ONCE to provision all resources.
 # ============================================================
 
-RESOURCE_GROUP="fourth-zendesk-prod"
+RESOURCE_GROUP="fourth-ai-prod"
 LOCATION="northeurope"
-ACR_NAME="fourthzendeskzap"
-ENVIRONMENT_NAME="fourth-zendesk-env"
+ACR_NAME="fourthzendeskmcp"
+ENVIRONMENT_NAME="fourth-ai-env"
 APP_NAME="fourth-zendesk-mcp-server"
-LOG_ANALYTICS_NAME="fourth-zendesk-env-logs"
+LOG_ANALYTICS_NAME="fourth-ai-env-logs"
 
 echo "=== Creating Resource Group ==="
 az group create \

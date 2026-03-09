@@ -5,7 +5,7 @@ set -euo pipefail
 # View Container App logs (live tail or recent)
 # ============================================================
 
-RESOURCE_GROUP="fourth-zendesk-prod"
+RESOURCE_GROUP="fourth-ai-prod"
 APP_NAME="fourth-zendesk-mcp-server"
 
 MODE="${1:-follow}"

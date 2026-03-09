@@ -40,12 +40,6 @@ function loadToolsConfig() {
   }
 }
 
-const server = new McpServer({
-  name: "Zendesk API",
-  version: "1.2.0",
-  description: "Hardened MCP Server for Zendesk API - Tickets & Articles (read/create/update only, no delete operations)"
-});
-
 const allTools = [
   ...ticketsTools,
   ...helpCenterTools,
@@ -66,55 +60,70 @@ const enabledTools = allTools.filter(tool => {
   return true;
 });
 
-enabledTools.forEach(tool => {
-  const args = [tool.name, tool.description, tool.schema];
-  if (tool.annotations) args.push(tool.annotations);
-  args.push(tool.handler);
-  server.tool(...args);
-});
-
 console.error(`[zendesk-mcp] Config source: ${config.source}`);
 console.error(`[zendesk-mcp] Registered ${enabledTools.length}/${allTools.length} tools: ${enabledTools.map(t => t.name).join(', ')}`);
 if (config.disabled.size > 0) {
   console.error(`[zendesk-mcp] Disabled: ${[...config.disabled].join(', ')}`);
 }
 
-server.resource(
-  "documentation",
-  new ResourceTemplate("zendesk://docs/{section}", { list: undefined }),
-  async (uri, { section }) => {
-    const docs = {
-      "tickets": "Tickets API: list, get, create, update tickets.\nEndpoints: GET/POST/PUT /api/v2/tickets",
-      "help_center": "Help Center API: list, get, create, update articles.\nEndpoints: GET/POST/PUT /api/v2/help_center/articles",
-      "search": "Search API: search across Zendesk data.\nEndpoints: GET /api/v2/search",
-      "overview": "This server provides access to Zendesk Tickets and Help Center Articles (read/create/update). All delete operations have been removed for safety."
-    };
+function registerTools(server) {
+  enabledTools.forEach(tool => {
+    const args = [tool.name, tool.description, tool.schema];
+    if (tool.annotations) args.push(tool.annotations);
+    args.push(tool.handler);
+    server.tool(...args);
+  });
+}
 
-    if (!section || section === "all") {
+function registerResources(server) {
+  server.resource(
+    "documentation",
+    new ResourceTemplate("zendesk://docs/{section}", { list: undefined }),
+    async (uri, { section }) => {
+      const docs = {
+        "tickets": "Tickets API: list, get, create, update tickets.\nEndpoints: GET/POST/PUT /api/v2/tickets",
+        "help_center": "Help Center API: list, get, create, update articles.\nEndpoints: GET/POST/PUT /api/v2/help_center/articles",
+        "search": "Search API: search across Zendesk data.\nEndpoints: GET /api/v2/search",
+        "overview": "This server provides access to Zendesk Tickets and Help Center Articles (read/create/update). All delete operations have been removed for safety."
+      };
+
+      if (!section || section === "all") {
+        return {
+          contents: [{
+            uri: uri.href,
+            text: `Zendesk API Documentation Overview\n\n${Object.keys(docs).map(key => `- ${key}: ${docs[key].split('\n')[0]}`).join('\n')}`
+          }]
+        };
+      }
+
+      if (docs[section]) {
+        return {
+          contents: [{
+            uri: uri.href,
+            text: `Zendesk API Documentation: ${section}\n\n${docs[section]}`
+          }]
+        };
+      }
+
       return {
         contents: [{
           uri: uri.href,
-          text: `Zendesk API Documentation Overview\n\n${Object.keys(docs).map(key => `- ${key}: ${docs[key].split('\n')[0]}`).join('\n')}`
+          text: `Section '${section}' not found. Available: ${Object.keys(docs).join(', ')}`
         }]
       };
     }
+  );
+}
 
-    if (docs[section]) {
-      return {
-        contents: [{
-          uri: uri.href,
-          text: `Zendesk API Documentation: ${section}\n\n${docs[section]}`
-        }]
-      };
-    }
+export function createServer() {
+  const server = new McpServer({
+    name: "Zendesk API",
+    version: "1.4.0",
+    description: "Hardened MCP Server for Zendesk API - Tickets & Articles (read/create/update only, no delete operations)"
+  });
+  registerTools(server);
+  registerResources(server);
+  return server;
+}
 
-    return {
-      contents: [{
-        uri: uri.href,
-        text: `Section '${section}' not found. Available: ${Object.keys(docs).join(', ')}`
-      }]
-    };
-  }
-);
-
-export { server };
+export const server = createServer();

@@ -1,6 +1,21 @@
 import { z } from 'zod';
 import { zendeskClient } from '../zendesk-client.js';
 
+function articleSummary(a) {
+  return {
+    id: a.id,
+    url: a.html_url || zendeskClient.getHelpCenterArticleUrl(a.id),
+    title: a.title,
+    section_id: a.section_id,
+    locale: a.locale,
+    draft: a.draft,
+    created_at: a.created_at,
+    updated_at: a.updated_at,
+    author_id: a.author_id,
+    label_names: a.label_names,
+  };
+}
+
 export const helpCenterTools = [
   {
     name: "list_articles",
@@ -20,8 +35,10 @@ export const helpCenterTools = [
         if (sort_by !== undefined) params.sort_by = sort_by;
         if (sort_order !== undefined) params.sort_order = sort_order;
         const result = await zendeskClient.listArticles(params);
+        const articles = (result.articles || []).map(articleSummary);
+        const summary = { count: result.count, next_page: result.next_page, articles };
         return {
-          content: [{ type: "text", text: JSON.stringify(result, null, 2) }]
+          content: [{ type: "text", text: JSON.stringify(summary, null, 2) }]
         };
       } catch (error) {
         return {
@@ -41,12 +58,17 @@ export const helpCenterTools = [
     handler: async ({ id }) => {
       try {
         const result = await zendeskClient.getArticle(id);
+        const a = result.article || result;
+        const summary = {
+          ...articleSummary(a),
+          body: (a.body || '').substring(0, 2000),
+        };
         return {
-          content: [{ type: "text", text: JSON.stringify(result, null, 2) }]
+          content: [{ type: "text", text: JSON.stringify(summary, null, 2) }]
         };
       } catch (error) {
         return {
-          content: [{ type: "text", text: `Error getting article: ${error.message}` }],
+          content: [{ type: "text", text: `Error getting article #${id}: ${error.message}` }],
           isError: true
         };
       }
@@ -75,8 +97,10 @@ export const helpCenterTools = [
         articleData.user_segment_id = user_segment_id !== undefined ? user_segment_id : null;
         if (label_names !== undefined) articleData.label_names = label_names;
         const result = await zendeskClient.createArticle(articleData, section_id);
+        const a = result?.article || result;
+        const summary = articleSummary(a);
         return {
-          content: [{ type: "text", text: `Article created successfully!\n\n${JSON.stringify(result, null, 2)}` }]
+          content: [{ type: "text", text: `Article #${a.id} created successfully!\n\n${JSON.stringify(summary, null, 2)}` }]
         };
       } catch (error) {
         return {
@@ -112,13 +136,14 @@ export const helpCenterTools = [
         if (label_names !== undefined) articleData.label_names = label_names;
 
         const result = await zendeskClient.updateArticle(id, articleData);
-        const article = result?.article || result?.translation || result;
+        const a = result?.article || result?.translation || result;
+        const summary = articleSummary(a);
         return {
-          content: [{ type: "text", text: `Article updated successfully!\n\n${JSON.stringify({ article }, null, 2)}` }]
+          content: [{ type: "text", text: `Article #${id} updated successfully!\n\n${JSON.stringify(summary, null, 2)}` }]
         };
       } catch (error) {
         return {
-          content: [{ type: "text", text: `Error updating article: ${error.message}` }],
+          content: [{ type: "text", text: `Error updating article #${id}: ${error.message}` }],
           isError: true
         };
       }

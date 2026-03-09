@@ -2,8 +2,8 @@
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { server } from './server.js';
-import { runWithAuth } from './zendesk-client.js';
+import { server, createServer } from './server.js';
+import { runWithRequestContext } from './zendesk-client.js';
 import dotenv from 'dotenv';
 import http from 'node:http';
 import { URL } from 'node:url';
@@ -25,7 +25,7 @@ if (transport === 'http' || transport === 'sse') {
   const healthResponse = JSON.stringify({
     status: 'healthy',
     service: 'Zendesk MCP Server',
-    version: '1.2.0',
+    version: '1.4.0',
     transports: ['sse', 'streamable-http']
   });
 
@@ -35,9 +35,70 @@ if (transport === 'http' || transport === 'sse') {
     return Buffer.concat(chunks).toString();
   }
 
+  function readHeader(headers, name) {
+    const value = headers[name];
+    if (Array.isArray(value)) return value[0] || null;
+    return value || null;
+  }
+
+  function readFirstHeader(headers, ...names) {
+    for (const name of names) {
+      const value = readHeader(headers, name);
+      if (value !== null && value !== undefined && value !== '') {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  function mergeRequestContext(req, fallback = {}) {
+    const authorization = readHeader(req.headers, 'authorization') ?? fallback.authorization ?? null;
+    const zendeskSubdomainHeader = readFirstHeader(
+      req.headers,
+      'x-zendesk-subdomain',
+      'zendesk-subdomain',
+    );
+    const zendeskBaseUrlHeader = readFirstHeader(
+      req.headers,
+      'x-zendesk-base-url',
+      'zendesk-base-url',
+    );
+    const hasTargetOverride = zendeskSubdomainHeader !== null || zendeskBaseUrlHeader !== null;
+
+    return {
+      authorization,
+      zendeskSubdomain: hasTargetOverride ? zendeskSubdomainHeader : (fallback.zendeskSubdomain ?? null),
+      zendeskBaseUrl: hasTargetOverride ? zendeskBaseUrlHeader : (fallback.zendeskBaseUrl ?? null),
+    };
+  }
+
+  process.on('uncaughtException', (err) => {
+    console.error(`[zendesk-mcp] UNCAUGHT EXCEPTION: ${err.stack || err.message}`);
+  });
+  process.on('unhandledRejection', (reason) => {
+    console.error(`[zendesk-mcp] UNHANDLED REJECTION: ${reason?.stack || reason}`);
+  });
+
   const httpServer = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
-    const authHeader = req.headers['authorization'] || null;
+    const requestContext = mergeRequestContext(req);
+
+    console.error(`[zendesk-mcp] ${req.method} ${url.pathname} (auth: ${requestContext.authorization ? 'yes' : 'no'}, target: ${requestContext.zendeskSubdomain || requestContext.zendeskBaseUrl ? 'yes' : 'no'}, session: ${req.headers['mcp-session-id'] || 'none'})`);
+
+    // ── CORS preflight ─────────────────────────────────────────────
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization, Mcp-Session-Id, mcp-session-id, X-Zendesk-Subdomain, X-Zendesk-Base-Url, zendesk-subdomain, zendesk-base-url',
+        'Access-Control-Max-Age': '86400',
+      });
+      res.end();
+      return;
+    }
+
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Expose-Headers', 'Mcp-Session-Id');
 
     // ── Health ──────────────────────────────────────────────────────
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/health')) {
@@ -48,70 +109,80 @@ if (transport === 'http' || transport === 'sse') {
 
     // ── Streamable HTTP transport (POST /mcp) — CoPilot Studio ─────
     if (url.pathname === '/mcp') {
-      const sessionId = req.headers['mcp-session-id'];
+      try {
+        const sessionId = req.headers['mcp-session-id'];
 
-      if (req.method === 'POST') {
-        const raw = await readBody(req);
-        console.error(`[zendesk-mcp] POST /mcp (session: ${sessionId || 'new'}): ${raw.substring(0, 200)}`);
-        const body = JSON.parse(raw);
+        if (req.method === 'POST') {
+          const raw = await readBody(req);
+          console.error(`[zendesk-mcp] POST /mcp (session: ${sessionId || 'new'}): ${raw.substring(0, 200)}`);
+          const body = JSON.parse(raw);
 
-        const isInit = Array.isArray(body)
-          ? body.some(m => m.method === 'initialize')
-          : body.method === 'initialize';
+          const isInit = Array.isArray(body)
+            ? body.some(m => m.method === 'initialize')
+            : body.method === 'initialize';
 
-        if (isInit && !sessionId) {
-          const streamTransport = new StreamableHTTPServerTransport({
-            sessionIdGenerator: () => randomUUID(),
-          });
+          if (isInit && !sessionId) {
+            const streamTransport = new StreamableHTTPServerTransport({
+              sessionIdGenerator: () => randomUUID(),
+            });
 
-          streamTransport.onclose = () => {
-            const sid = streamTransport.sessionId;
-            if (sid) streamableSessions.delete(sid);
-            console.error(`[zendesk-mcp] Streamable session closed: ${sid}`);
-          };
+            streamTransport.onclose = () => {
+              const sid = streamTransport.sessionId;
+              if (sid) streamableSessions.delete(sid);
+              console.error(`[zendesk-mcp] Streamable session closed: ${sid}`);
+            };
 
-          await server.connect(streamTransport);
+            const sessionServer = createServer();
+            await sessionServer.connect(streamTransport);
+            await runWithRequestContext(requestContext, () => streamTransport.handleRequest(req, res, body));
 
-          if (streamTransport.sessionId) {
-            streamableSessions.set(streamTransport.sessionId, { transport: streamTransport, authHeader });
+            if (streamTransport.sessionId) {
+              streamableSessions.set(streamTransport.sessionId, { transport: streamTransport, requestContext });
+              console.error(`[zendesk-mcp] Session stored: ${streamTransport.sessionId}`);
+            }
+            return;
           }
 
-          await runWithAuth(authHeader, () => streamTransport.handleRequest(req, res, body));
+          const session = streamableSessions.get(sessionId);
+          if (!session) {
+            console.error(`[zendesk-mcp] Session not found: ${sessionId} (known: ${[...streamableSessions.keys()].join(', ')})`);
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Invalid or missing session. Send initialize first.' }));
+            return;
+          }
+
+          session.requestContext = mergeRequestContext(req, session.requestContext);
+          await runWithRequestContext(session.requestContext, () => session.transport.handleRequest(req, res, body));
           return;
         }
 
-        const session = streamableSessions.get(sessionId);
-        if (!session) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Invalid or missing session. Send initialize first.' }));
+        if (req.method === 'GET') {
+          const session = streamableSessions.get(sessionId);
+          if (!session) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Invalid or missing session.' }));
+            return;
+          }
+          await session.transport.handleRequest(req, res);
           return;
         }
 
-        if (authHeader) session.authHeader = authHeader;
-
-        await runWithAuth(session.authHeader, () => session.transport.handleRequest(req, res, body));
-        return;
-      }
-
-      if (req.method === 'GET') {
-        const session = streamableSessions.get(sessionId);
-        if (!session) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Invalid or missing session.' }));
+        if (req.method === 'DELETE') {
+          const session = streamableSessions.get(sessionId);
+          if (session) {
+            await session.transport.close();
+            streamableSessions.delete(sessionId);
+          }
+          res.writeHead(200);
+          res.end();
           return;
         }
-        await session.transport.handleRequest(req, res);
-        return;
-      }
-
-      if (req.method === 'DELETE') {
-        const session = streamableSessions.get(sessionId);
-        if (session) {
-          await session.transport.close();
-          streamableSessions.delete(sessionId);
+      } catch (err) {
+        console.error(`[zendesk-mcp] /mcp error: ${err.stack || err.message}`);
+        if (!res.headersSent) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
         }
-        res.writeHead(200);
-        res.end();
         return;
       }
     }
@@ -120,7 +191,7 @@ if (transport === 'http' || transport === 'sse') {
     if (req.method === 'GET' && url.pathname === '/sse') {
       console.error(`[zendesk-mcp] SSE connection from ${req.socket.remoteAddress}`);
       const sseTransport = new SSEServerTransport('/messages', res);
-      sseSessions.set(sseTransport.sessionId, { transport: sseTransport, authHeader });
+      sseSessions.set(sseTransport.sessionId, { transport: sseTransport, requestContext });
 
       res.on('close', () => {
         sseSessions.delete(sseTransport.sessionId);
@@ -140,13 +211,13 @@ if (transport === 'http' || transport === 'sse') {
         return;
       }
 
-      if (authHeader) session.authHeader = authHeader;
+      session.requestContext = mergeRequestContext(req, session.requestContext);
 
       try {
         const raw = await readBody(req);
         console.error(`[zendesk-mcp] POST /messages body: ${raw.substring(0, 200)}`);
         const body = JSON.parse(raw);
-        await runWithAuth(session.authHeader, () =>
+        await runWithRequestContext(session.requestContext, () =>
           session.transport.handlePostMessage(req, res, body)
         );
       } catch (err) {

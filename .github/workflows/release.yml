@@ -6,8 +6,8 @@ on:
       - 'v*'
 
 env:
-  AZURE_RESOURCE_GROUP: fourth-zendesk-prod
-  AZURE_CONTAINER_REGISTRY: fourthzendeskzap
+  AZURE_RESOURCE_GROUP: fourth-ai-prod
+  AZURE_CONTAINER_REGISTRY: fourthzendeskmcp
   AZURE_CONTAINER_APP: fourth-zendesk-mcp-server
   AZURE_LOCATION: northeurope
 
@@ -90,9 +90,13 @@ jobs:
       - name: Verify deployment
         run: |
           sleep 30
+          FQDN=$(az containerapp show \
+            --name ${{ env.AZURE_CONTAINER_APP }} \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --query "properties.configuration.ingress.fqdn" -o tsv)
           for i in $(seq 1 6); do
             RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
-              "https://${{ env.AZURE_CONTAINER_APP }}.northeurope.azurecontainerapps.io/health" \
+              "https://${FQDN}/health" \
               --max-time 10) || true
             if [ "$RESPONSE" = "200" ]; then
               echo "Deployment verified - health check passed"

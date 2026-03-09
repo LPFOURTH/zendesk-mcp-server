@@ -1,81 +1,99 @@
-# Zendesk MCP Server (Hardened Fork)
+# Zendesk MCP Server
 
-Security-hardened fork of [mattcoatsworth/zendesk-mcp-server](https://github.com/mattcoatsworth/zendesk-mcp-server) with reduced tool surface, dependency fixes, and Azure Container Apps deployment support.
+Hardened Zendesk MCP server for tickets, Help Center articles, search, and release note creation. This fork keeps the tool surface intentionally small, supports local `stdio` plus remote Streamable HTTP, and can target either production or sandbox Zendesk per request.
 
-## Changes from Original
+## Highlights
 
-- **Tool surface reduced from 49 to 9** (tickets + articles + search only)
-- **All DELETE operations removed**
-- **All user/org/group/macro/view/trigger/automation tools removed**
-- **Dependencies updated** (0 known vulnerabilities)
-- **HTTP/SSE transport added** for remote deployment
-- **Rate limiting** (configurable, default 200 req/min)
-- **Input validation bounds** (per_page, string lengths)
-- **Error sanitization** (no raw API data leaked)
-- **Subdomain validation** (SSRF prevention)
-- **Docker + Azure Bicep + GitHub Actions CI/CD**
+- Reduced tool surface from the original broad Zendesk fork to `10` focused tools
+- No delete operations
+- Per-user auth via request `Authorization` header, with `.env` fallback for local use
+- Dynamic Zendesk targeting via `zendesk-subdomain` or `zendesk-base-url`
+- Ticket and article responses include direct Zendesk URLs
+- Dependency audit clean: `0` vulnerabilities
+- Azure Container Apps deployment scripts and GitHub Actions included
 
 ## Available Tools
 
 | Tool | Type | Description |
 |------|------|-------------|
-| `list_tickets` | Read | List tickets with pagination |
-| `get_ticket` | Read | Get ticket by ID |
-| `create_ticket` | Write | Create a new ticket |
-| `update_ticket` | Write | Update an existing ticket |
+| `list_tickets` | Read | List tickets with pagination and optional status targeting |
+| `get_ticket` | Read | Get a ticket by ID |
+| `create_ticket` | Write | Create a ticket |
+| `update_ticket` | Write | Update a ticket |
 | `list_articles` | Read | List Help Center articles |
-| `get_article` | Read | Get article by ID |
-| `create_article` | Write | Create a Help Center article |
-| `update_article` | Write | Update an existing article |
-| `search` | Read | Search across Zendesk data |
+| `get_article` | Read | Get an article by ID |
+| `create_article` | Write | Create an article |
+| `update_article` | Write | Update an article |
+| `search` | Read | Search tickets, articles, or all supported Zendesk content |
+| `create_release_note` | Write | Create a Help Center release note from structured markdown |
 
 ## Quick Start
 
-### Local (stdio mode for Cursor/Claude Desktop)
+### Local `stdio`
 
 ```bash
 cp .env.example .env
-# Edit .env with your Zendesk credentials
 npm install
 npm start
 ```
 
-### Local (HTTP/SSE mode for testing remote transport)
+### Local Streamable HTTP
 
 ```bash
+cp .env.example .env
+npm install
 npm run start:http
-# Server at http://localhost:8000/sse
-# Health check at http://localhost:8000/health
 ```
 
-### Docker
-
-```bash
-docker build -t zendesk-mcp-server .
-docker run -p 8000:8000 \
-  -e ZENDESK_SUBDOMAIN=your-subdomain \
-  -e ZENDESK_EMAIL=your-email@example.com \
-  -e ZENDESK_API_TOKEN=your-api-token \
-  zendesk-mcp-server
-```
+Health check: `http://localhost:8000/health`
 
 ## Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ZENDESK_SUBDOMAIN` | (required) | Your Zendesk subdomain |
-| `ZENDESK_EMAIL` | (required) | Zendesk agent email |
-| `ZENDESK_API_TOKEN` | (required) | Zendesk API token |
-| `MCP_TRANSPORT` | `stdio` | Transport: `stdio` or `http` |
-| `MCP_HTTP_PORT` | `8000` | HTTP server port |
-| `MCP_HTTP_HOST` | `0.0.0.0` | HTTP server host |
-| `DISABLED_TOOLS` | (empty) | Comma-separated tool names to disable |
+| `ZENDESK_SUBDOMAIN` | unset | Default Zendesk subdomain |
+| `ZENDESK_BASE_URL` | unset | Alternative to `ZENDESK_SUBDOMAIN`, for example `https://company.zendesk.com` |
+| `ZENDESK_EMAIL` | unset | Zendesk agent email for local fallback auth |
+| `ZENDESK_API_TOKEN` | unset | Zendesk API token for local fallback auth |
+| `MCP_TRANSPORT` | `stdio` | `stdio` or `http` |
+| `MCP_HTTP_PORT` | `8000` | HTTP port |
+| `MCP_HTTP_HOST` | `0.0.0.0` | HTTP bind host |
+| `DISABLED_TOOLS` | empty | Comma-separated tools to disable |
 | `ZENDESK_RATE_LIMIT` | `200` | Max Zendesk API calls per minute |
+
+## Dynamic Targeting
+
+For remote clients such as Copilot Studio, send one of these headers on each request:
+
+- `zendesk-subdomain: your-subdomain`
+- `zendesk-base-url: https://your-subdomain.zendesk.com`
+
+The server also accepts `x-zendesk-subdomain` and `x-zendesk-base-url`.
+
+If neither header is present, the server uses `ZENDESK_SUBDOMAIN` or `ZENDESK_BASE_URL` from the environment.
+
+## Tests
+
+```bash
+npm run test:targeting
+npm run test:regression
+```
+
+## Connector
+
+Power Platform connector assets live in `connector/`. See `connector/README.md` for per-user auth and sandbox/prod configuration.
 
 ## Azure Deployment
 
-See `deployment/azure/bicep/main.bicep` for infrastructure-as-code and `.github/workflows/release.yml` for CI/CD.
+The checked-in scripts and workflow are aligned to the current live deployment:
+
+- Resource group: `fourth-ai-prod`
+- Managed environment: `fourth-ai-env`
+- Container registry: `fourthzendeskmcp`
+- Container app: `fourth-zendesk-mcp-server`
+
+Use `deployment/azure/scripts/2-build-and-deploy.sh` for manual deploys or `.github/workflows/release.yml` for tagged releases.
 
 ## Security
 
-See [SECURITY_REPORT.md](SECURITY_REPORT.md) for the full compliance and security assessment.
+See `SECURITY_REPORT.md` for the current security summary and remediation history.
