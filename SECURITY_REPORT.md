@@ -1,6 +1,6 @@
 # Security Report: Zendesk MCP Server
 
-**Repository:** https://github.com/LPFOURTH/zendesk-mcp-server  
+**Repository:** https://github.com/fourth/zendesk-mcp-fourth  
 **Base Fork:** https://github.com/mattcoatsworth/zendesk-mcp-server  
 **Current Version:** 1.4.0  
 **Assessment Updated:** 2026-03-07  

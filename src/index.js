@@ -4,6 +4,7 @@ import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { server, createServer } from './server.js';
 import { runWithRequestContext } from './zendesk-client.js';
+import { mergeRequestContext } from './request-context.js';
 import dotenv from 'dotenv';
 import http from 'node:http';
 import { URL } from 'node:url';
@@ -33,43 +34,6 @@ if (transport === 'http' || transport === 'sse') {
     const chunks = [];
     for await (const chunk of req) { chunks.push(chunk); }
     return Buffer.concat(chunks).toString();
-  }
-
-  function readHeader(headers, name) {
-    const value = headers[name];
-    if (Array.isArray(value)) return value[0] || null;
-    return value || null;
-  }
-
-  function readFirstHeader(headers, ...names) {
-    for (const name of names) {
-      const value = readHeader(headers, name);
-      if (value !== null && value !== undefined && value !== '') {
-        return value;
-      }
-    }
-    return null;
-  }
-
-  function mergeRequestContext(req, fallback = {}) {
-    const authorization = readHeader(req.headers, 'authorization') ?? fallback.authorization ?? null;
-    const zendeskSubdomainHeader = readFirstHeader(
-      req.headers,
-      'x-zendesk-subdomain',
-      'zendesk-subdomain',
-    );
-    const zendeskBaseUrlHeader = readFirstHeader(
-      req.headers,
-      'x-zendesk-base-url',
-      'zendesk-base-url',
-    );
-    const hasTargetOverride = zendeskSubdomainHeader !== null || zendeskBaseUrlHeader !== null;
-
-    return {
-      authorization,
-      zendeskSubdomain: hasTargetOverride ? zendeskSubdomainHeader : (fallback.zendeskSubdomain ?? null),
-      zendeskBaseUrl: hasTargetOverride ? zendeskBaseUrlHeader : (fallback.zendeskBaseUrl ?? null),
-    };
   }
 
   process.on('uncaughtException', (err) => {

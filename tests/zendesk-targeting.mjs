@@ -10,6 +10,7 @@ const {
   runWithRequestContext,
   resolveZendeskTarget,
 } = await import(`../src/zendesk-client.js?test=${Date.now()}`);
+const { mergeRequestContext } = await import(`../src/request-context.js?test=${Date.now()}`);
 
 assert.deepEqual(
   resolveZendeskTarget({ zendeskSubdomain: 'sandbox-instance' }),
@@ -46,5 +47,63 @@ await runWithRequestContext({ zendeskBaseUrl: 'https://sandbox-instance.zendesk.
   assert.equal(zendeskClient.getBaseUrl(), 'https://sandbox-instance.zendesk.com/api/v2');
   assert.equal(zendeskClient.getAgentTicketUrl(60612), 'https://sandbox-instance.zendesk.com/agent/tickets/60612');
 });
+
+assert.deepEqual(
+  mergeRequestContext(
+    {
+      headers: {},
+    },
+    {
+      authorization: 'Basic persisted-auth',
+      zendeskSubdomain: 'sandbox-instance',
+      zendeskBaseUrl: null,
+    },
+  ),
+  {
+    authorization: 'Basic persisted-auth',
+    zendeskSubdomain: null,
+    zendeskBaseUrl: null,
+  },
+);
+
+assert.deepEqual(
+  mergeRequestContext(
+    {
+      headers: {
+        'zendesk-subdomain': '',
+      },
+    },
+    {
+      authorization: 'Basic persisted-auth',
+      zendeskSubdomain: 'sandbox-instance',
+      zendeskBaseUrl: null,
+    },
+  ),
+  {
+    authorization: 'Basic persisted-auth',
+    zendeskSubdomain: null,
+    zendeskBaseUrl: null,
+  },
+);
+
+assert.deepEqual(
+  mergeRequestContext(
+    {
+      headers: {
+        'zendesk-subdomain': 'sandbox-instance',
+      },
+    },
+    {
+      authorization: 'Basic persisted-auth',
+      zendeskSubdomain: null,
+      zendeskBaseUrl: null,
+    },
+  ),
+  {
+    authorization: 'Basic persisted-auth',
+    zendeskSubdomain: 'sandbox-instance',
+    zendeskBaseUrl: null,
+  },
+);
 
 console.log('Zendesk target resolution checks passed.');

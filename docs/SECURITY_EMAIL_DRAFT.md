@@ -5,7 +5,7 @@ Hi team,
 The Zendesk MCP repository has now been cleaned up, security-hardened, and prepared for ongoing use.
 
 Repository:
-https://github.com/LPFOURTH/zendesk-mcp-server
+https://github.com/fourth/zendesk-mcp-fourth
 
 Summary of security remediation:
 
