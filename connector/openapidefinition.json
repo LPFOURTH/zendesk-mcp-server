@@ -3,7 +3,7 @@
   "info": {
     "title": "Fourth Zendesk MCP",
     "description": "Zendesk MCP Server developed by Fourth — tickets, articles, search, and release notes",
-    "version": "1.4.0"
+    "version": "2.0.0"
   },
   "host": "fourth-zendesk-mcp-server.bluewave-95f931ef.northeurope.azurecontainerapps.io",
   "basePath": "/",
@@ -25,6 +25,13 @@
             "type": "string",
             "required": false,
             "description": "Optional per-request Zendesk base URL, for example: https://fourthsandbox.zendesk.com"
+          },
+          {
+            "name": "zendesk-environment",
+            "in": "header",
+            "type": "string",
+            "required": false,
+            "description": "Environment: 'dev' for sandbox, 'prod' for production (default: prod)"
           }
         ],
         "responses": {

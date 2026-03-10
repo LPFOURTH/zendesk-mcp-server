@@ -16,8 +16,9 @@ Each request can provide:
 - `Authorization`: the user's Zendesk auth header
 - `zendesk-subdomain`: optional Zendesk target, such as `fourthsandbox`
 - `zendesk-base-url`: optional full Zendesk host, such as `https://fourthsandbox.zendesk.com`
+- `zendesk-environment`: optional environment selector (`dev` for sandbox, `prod` for production; default: `prod`)
 
-The server also accepts `x-zendesk-subdomain` and `x-zendesk-base-url`, but Copilot Studio custom connectors typically surface the non-`X-` names more reliably.
+The server also accepts `x-zendesk-subdomain`, `x-zendesk-base-url`, and `x-zendesk-environment`, but Copilot Studio custom connectors typically surface the non-`X-` names more reliably.
 
 ## How Per-User Auth Works
 

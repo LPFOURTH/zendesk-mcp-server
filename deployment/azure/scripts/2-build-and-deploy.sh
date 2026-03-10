@@ -48,7 +48,7 @@ if az containerapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" &>
 else
   echo "Container App does not exist. Creating..."
 
-  ENV_VARS="MCP_TRANSPORT=http MCP_HTTP_PORT=8000 MCP_HTTP_HOST=0.0.0.0 NODE_ENV=production"
+  ENV_VARS="MCP_TRANSPORT=http MCP_HTTP_PORT=8000 MCP_HTTP_HOST=0.0.0.0"
 
   if [ -n "$ZENDESK_SUBDOMAIN" ]; then
     ENV_VARS="$ENV_VARS ZENDESK_SUBDOMAIN=$ZENDESK_SUBDOMAIN"
