@@ -1,0 +1,15 @@
+{
+  "api_key": {
+    "type": "securestring",
+    "uiDefinition": {
+      "displayName": "ZendeskAuthToken (Dev)",
+      "description": "Your Zendesk sandbox authorization token. Use 'Basic <base64(email/token:api_token)>' for API token auth.",
+      "tooltip": "Provide your Zendesk sandbox authorization token",
+      "constraints": {
+        "tabIndex": 2,
+        "clearText": false,
+        "required": "true"
+      }
+    }
+  }
+}

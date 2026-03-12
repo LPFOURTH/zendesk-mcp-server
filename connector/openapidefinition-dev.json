@@ -1,15 +1,15 @@
 {
   "swagger": "2.0",
   "info": {
-    "title": "Fourth Zendesk MCP (Prod)",
-    "description": "Zendesk MCP Server developed by Fourth — production (hotschedules.zendesk.com)",
+    "title": "Fourth Zendesk MCP (Dev)",
+    "description": "Zendesk MCP Server developed by Fourth — sandbox (hotschedules1626093811.zendesk.com)",
     "version": "2.0.0"
   },
   "host": "fourth-zendesk-mcp-server.bluewave-95f931ef.northeurope.azurecontainerapps.io",
   "basePath": "/",
   "schemes": ["https"],
   "paths": {
-    "/mcp/prod": {
+    "/mcp/dev": {
       "post": {
         "parameters": [
           {
@@ -39,8 +39,8 @@
         },
         "x-ms-agentic-protocol": "mcp-streamable-1.0",
         "operationId": "InvokeServer",
-        "summary": "Fourth Zendesk MCP (Prod)",
-        "description": "Zendesk MCP Server developed by Fourth — production (hotschedules.zendesk.com)"
+        "summary": "Fourth Zendesk MCP (Dev)",
+        "description": "Zendesk MCP Server developed by Fourth — sandbox (hotschedules1626093811.zendesk.com)"
       }
     }
   },

@@ -1,0 +1,27 @@
+{
+  "token": {
+    "type": "oAuthSetting",
+    "oAuthSettings": {
+      "identityProvider": "oauth2",
+      "scopes": ["read write"],
+      "redirectMode": "GlobalPerConnector",
+      "customParameters": {
+        "AuthorizationUrl": {
+          "value": "https://hotschedules.zendesk.com/oauth/authorizations/new"
+        },
+        "TokenUrl": {
+          "value": "https://hotschedules.zendesk.com/oauth/tokens"
+        },
+        "RefreshUrl": {
+          "value": "https://hotschedules.zendesk.com/oauth/tokens"
+        }
+      }
+    },
+    "uiDefinition": {
+      "displayName": "Zendesk Login",
+      "description": "Sign in with your Zendesk account",
+      "tooltip": "Authenticate with Zendesk via OAuth 2.0",
+      "constraints": { "required": "true" }
+    }
+  }
+}

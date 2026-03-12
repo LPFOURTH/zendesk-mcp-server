@@ -114,10 +114,23 @@ def _make_context_middleware(app):
             await send({"type": "http.response.body", "body": b""})
             return
 
+        # Rewrite /mcp/dev and /mcp/prod to /mcp, injecting environment
+        path_env = None
+        if path == "/mcp/dev":
+            path_env = "dev"
+            scope = {**scope, "path": "/mcp"}
+        elif path == "/mcp/prod":
+            path_env = "prod"
+            scope = {**scope, "path": "/mcp"}
+
         # Extract headers into a dict
         headers = {}
         for key, value in scope.get("headers", []):
             headers[key.decode("latin-1").lower()] = value.decode("latin-1")
+
+        # Path-based environment takes precedence over headers
+        if path_env:
+            headers["zendesk-environment"] = path_env
 
         ctx = extract_request_context(headers)
         set_request_context(ctx)

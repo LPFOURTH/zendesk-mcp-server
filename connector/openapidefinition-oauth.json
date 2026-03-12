@@ -1,15 +1,15 @@
 {
   "swagger": "2.0",
   "info": {
-    "title": "Fourth Zendesk MCP (Prod)",
-    "description": "Zendesk MCP Server developed by Fourth — production (hotschedules.zendesk.com)",
+    "title": "Fourth Zendesk MCP",
+    "description": "Zendesk MCP Server developed by Fourth — tickets, articles, search, and release notes",
     "version": "2.0.0"
   },
   "host": "fourth-zendesk-mcp-server.bluewave-95f931ef.northeurope.azurecontainerapps.io",
   "basePath": "/",
   "schemes": ["https"],
   "paths": {
-    "/mcp/prod": {
+    "/mcp": {
       "post": {
         "parameters": [
           {
@@ -39,17 +39,22 @@
         },
         "x-ms-agentic-protocol": "mcp-streamable-1.0",
         "operationId": "InvokeServer",
-        "summary": "Fourth Zendesk MCP (Prod)",
-        "description": "Zendesk MCP Server developed by Fourth — production (hotschedules.zendesk.com)"
+        "summary": "Fourth Zendesk MCP",
+        "description": "Zendesk MCP Server developed by Fourth — tickets, articles, search, and release notes"
       }
     }
   },
   "securityDefinitions": {
-    "api_key": {
-      "type": "apiKey",
-      "name": "Authorization",
-      "in": "header"
+    "zendesk_oauth": {
+      "type": "oauth2",
+      "flow": "accessCode",
+      "authorizationUrl": "https://hotschedules.zendesk.com/oauth/authorizations/new",
+      "tokenUrl": "https://hotschedules.zendesk.com/oauth/tokens",
+      "scopes": {
+        "read": "Read access to Zendesk resources",
+        "write": "Write access to Zendesk resources"
+      }
     }
   },
-  "security": [{ "api_key": [] }]
+  "security": [{ "zendesk_oauth": ["read", "write"] }]
 }

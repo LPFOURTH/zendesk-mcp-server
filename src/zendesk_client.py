@@ -8,9 +8,11 @@ from urllib.parse import urlparse
 
 import httpx
 
+from .constants import ENVIRONMENTS
 from .request_context import (
     authorization_var,
     zendesk_base_url_var,
+    zendesk_environment_var,
     zendesk_subdomain_var,
 )
 
@@ -145,11 +147,18 @@ class ZendeskClient:
         self._http = httpx.AsyncClient(timeout=30.0)
 
     def _get_target(self) -> dict:
+        # If environment is set (e.g. via /mcp/dev or /mcp/prod path),
+        # use the environment's base_url as the default target.
+        env_name = zendesk_environment_var.get(None)
+        env_base_url = None
+        if env_name and env_name in ENVIRONMENTS:
+            env_base_url = ENVIRONMENTS[env_name].get("base_url")
+
         return resolve_zendesk_target(
             zendesk_subdomain=zendesk_subdomain_var.get(None),
             zendesk_base_url=zendesk_base_url_var.get(None),
-            default_subdomain=self._subdomain or None,
-            default_base_url=self._origin or None,
+            default_subdomain=self._subdomain if not env_base_url else None,
+            default_base_url=env_base_url or self._origin or None,
         )
 
     def get_origin(self) -> str:

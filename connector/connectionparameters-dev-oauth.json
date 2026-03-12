@@ -1,0 +1,27 @@
+{
+  "token": {
+    "type": "oAuthSetting",
+    "oAuthSettings": {
+      "identityProvider": "oauth2",
+      "scopes": ["read write"],
+      "redirectMode": "GlobalPerConnector",
+      "customParameters": {
+        "AuthorizationUrl": {
+          "value": "https://hotschedules1626093811.zendesk.com/oauth/authorizations/new"
+        },
+        "TokenUrl": {
+          "value": "https://hotschedules1626093811.zendesk.com/oauth/tokens"
+        },
+        "RefreshUrl": {
+          "value": "https://hotschedules1626093811.zendesk.com/oauth/tokens"
+        }
+      }
+    },
+    "uiDefinition": {
+      "displayName": "Zendesk Login (Dev)",
+      "description": "Sign in with your Zendesk sandbox account",
+      "tooltip": "Authenticate with Zendesk sandbox via OAuth 2.0",
+      "constraints": { "required": "true" }
+    }
+  }
+}
