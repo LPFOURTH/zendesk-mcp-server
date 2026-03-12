@@ -191,7 +191,6 @@ ALL_TOOLS = [
         "parameters": {
             "markdown_content": {"type": "string", "description": 'Markdown content with "### Functionality N Name" and "### Functionality N Description" sections', "required": True},
             "use_us_template": {"type": "boolean", "description": "Use the US release note template (default: false = UK template)", "required": False},
-            "title": {"type": "string", "description": "Custom article title. If omitted, auto-generated from feature names.", "required": False},
         },
         "fn": release_notes.create_release_note,
     },

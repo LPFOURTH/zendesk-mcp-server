@@ -151,7 +151,6 @@ def format_release_note_info_steps_section(functionalities_data: dict) -> str:
 async def create_release_note(
     markdown_content: str,
     use_us_template: bool = False,
-    title: str | None = None,
 ) -> str:
     release_data = parse_markdown_content(markdown_content)
 
@@ -161,18 +160,16 @@ async def create_release_note(
         if func_data.get("Name") and func_data["Name"].strip()
     ]
 
-    article_title = title
-    if not article_title:
-        all_features = ", ".join(feature_names)
-        if use_us_template:
-            article_title = (
-                f"New Release | Main: {all_features} - "
-                f"Labor: move features here if needed | Mmm DD YYYY"
-            )
-        else:
-            article_title = f"New Release | Product Name: {all_features} | DD Mmm YYYY"
-        if len(article_title) > 256:
-            article_title = article_title[:253] + "..."
+    all_features = ", ".join(feature_names)
+    if use_us_template:
+        article_title = (
+            f"New Release | Main: {all_features} - "
+            f"Labor: move features here if needed | Mmm DD YYYY"
+        )
+    else:
+        article_title = f"New Release | Product Name: {all_features} | DD Mmm YYYY"
+    if len(article_title) > 256:
+        article_title = article_title[:253] + "..."
 
     whats_new = format_whats_new_section(release_data)
     info_steps = format_release_note_info_steps_section(release_data)
