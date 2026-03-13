@@ -168,8 +168,10 @@ async def create_release_note(
         )
     else:
         article_title = f"New Release | Product Name: {all_features} | DD Mmm YYYY"
-    if len(article_title) > 256:
-        article_title = article_title[:253] + "..."
+    if len(article_title.encode("utf-8")) > 255:
+        while len(article_title.encode("utf-8")) > 252:
+            article_title = article_title[:-1]
+        article_title = article_title.rstrip() + "..."
 
     whats_new = format_whats_new_section(release_data)
     info_steps = format_release_note_info_steps_section(release_data)
