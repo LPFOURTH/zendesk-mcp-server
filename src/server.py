@@ -6,7 +6,7 @@ import sys
 
 from mcp.server.fastmcp import FastMCP
 
-from .tools import tickets, help_center, search, release_notes
+from .tools import tickets, help_center, search, release_notes, community
 
 
 def _load_tools_config() -> dict:
@@ -193,6 +193,65 @@ ALL_TOOLS = [
             "use_us_template": {"type": "boolean", "description": "Use the US release note template (default: false = UK template)", "required": False},
         },
         "fn": release_notes.create_release_note,
+    },
+    # -- community ideas --
+    {
+        "name": "list_ideas",
+        "description": (
+            "List community Ideas posts with filtering by topic, tag, and status. "
+            "Returns pre-computed data updated weekly. Posts older than 2 years are "
+            "excluded by default — set include_archived=true to include them."
+        ),
+        "parameters": {
+            "topic": {"type": "string", "description": "Filter by topic name (partial match)", "required": False},
+            "tag": {"type": "string", "description": "Filter by tag name (exact match)", "required": False},
+            "status": {"type": "string", "description": "Filter by status", "required": False, "enum": ["planned", "not_planned", "completed", "answered", "none"]},
+            "sort_by": {"type": "string", "description": "Sort by field", "required": False, "enum": ["votes", "date", "updated"]},
+            "sort_order": {"type": "string", "description": "Sort order", "required": False, "enum": ["asc", "desc"]},
+            "page": {"type": "integer", "description": "Page number", "required": False},
+            "per_page": {"type": "integer", "description": "Results per page (1-100)", "required": False},
+            "include_archived": {"type": "boolean", "description": "Include ideas older than 2 years", "required": False},
+        },
+        "fn": community.list_ideas,
+    },
+    {
+        "name": "get_idea",
+        "description": "Get a specific community Idea by ID with full details and comments.",
+        "parameters": {
+            "id": {"type": "integer", "description": "Idea post ID", "required": True},
+            "include_archived": {"type": "boolean", "description": "Include if idea is older than 2 years", "required": False},
+        },
+        "fn": community.get_idea,
+    },
+    {
+        "name": "search_ideas",
+        "description": (
+            "Search community Ideas by keyword across titles, details, and tags. "
+            "Posts older than 2 years excluded by default."
+        ),
+        "parameters": {
+            "query": {"type": "string", "description": "Search keywords", "required": True},
+            "topic": {"type": "string", "description": "Filter by topic name (partial match)", "required": False},
+            "tag": {"type": "string", "description": "Filter by tag name", "required": False},
+            "status": {"type": "string", "description": "Filter by status", "required": False, "enum": ["planned", "not_planned", "completed", "answered", "none"]},
+            "page": {"type": "integer", "description": "Page number", "required": False},
+            "per_page": {"type": "integer", "description": "Results per page (1-100)", "required": False},
+            "include_archived": {"type": "boolean", "description": "Include ideas older than 2 years", "required": False},
+        },
+        "fn": community.search_ideas,
+    },
+    {
+        "name": "ideas_analytics",
+        "description": (
+            "Get summary analytics for community Ideas: top voted, status distribution, "
+            "breakdowns by topic or tag. Pre-computed data updated weekly."
+        ),
+        "parameters": {
+            "group_by": {"type": "string", "description": "Group results by field", "required": False, "enum": ["topic", "tag", "status"]},
+            "top_n": {"type": "integer", "description": "Number of top ideas to show (default 10)", "required": False},
+            "include_archived": {"type": "boolean", "description": "Include ideas older than 2 years in stats", "required": False},
+        },
+        "fn": community.ideas_analytics,
     },
 ]
 
