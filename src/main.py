@@ -55,19 +55,29 @@ def _run_http(mcp) -> None:
         Route("/health", health, methods=["GET"]),
     ])
 
-    # Build the MCP Starlette app (includes lifespan for session manager)
-    # Support both Streamable HTTP (/mcp) and legacy SSE (/sse + /messages)
+    # Build both Streamable HTTP (/mcp) and SSE (/sse + /messages) apps
     starlette_app = mcp.streamable_http_app()
 
-    # Add SSE transport for backwards compatibility with older clients
+    # Combine with SSE for backwards compatibility
     try:
         sse_app = mcp.sse_app()
-        from starlette.routing import Mount
-        # Mount SSE app at /sse and /messages paths
-        mcp._custom_starlette_routes.append(Mount("/", app=sse_app))
         has_sse = True
     except Exception:
+        sse_app = None
         has_sse = False
+
+    if has_sse:
+        # Route /sse and /messages to SSE app, everything else to Streamable HTTP
+        original_app = starlette_app
+
+        async def combined_app(scope, receive, send):
+            path = scope.get("path", "")
+            if path in ("/sse", "/messages", "/messages/"):
+                await sse_app(scope, receive, send)
+            else:
+                await original_app(scope, receive, send)
+
+        starlette_app = combined_app
 
     # Wrap with ASGI middleware for context extraction and CORS
     app = _make_context_middleware(starlette_app)
