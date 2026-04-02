@@ -56,7 +56,18 @@ def _run_http(mcp) -> None:
     ])
 
     # Build the MCP Starlette app (includes lifespan for session manager)
+    # Support both Streamable HTTP (/mcp) and legacy SSE (/sse + /messages)
     starlette_app = mcp.streamable_http_app()
+
+    # Add SSE transport for backwards compatibility with older clients
+    try:
+        sse_app = mcp.sse_app()
+        from starlette.routing import Mount
+        # Mount SSE app at /sse and /messages paths
+        mcp._custom_starlette_routes.append(Mount("/", app=sse_app))
+        has_sse = True
+    except Exception:
+        has_sse = False
 
     # Wrap with ASGI middleware for context extraction and CORS
     app = _make_context_middleware(starlette_app)
@@ -66,6 +77,11 @@ def _run_http(mcp) -> None:
         f"[zendesk-mcp] Streamable HTTP: http://{host}:{port}/mcp",
         file=sys.stderr,
     )
+    if has_sse:
+        print(
+            f"[zendesk-mcp] SSE (legacy):     http://{host}:{port}/sse",
+            file=sys.stderr,
+        )
     print(
         f"[zendesk-mcp] Health check:     http://{host}:{port}/health",
         file=sys.stderr,
@@ -150,6 +166,53 @@ def _make_context_middleware(app):
             file=sys.stderr,
         )
 
+        # For POST requests, buffer the body so we can inspect JSON-RPC method.
+        # If it's an "initialize" request, strip any stale Mcp-Session-Id header
+        # so the server always creates a fresh session.  This works around MCP
+        # clients (e.g. Cursor) that cache a session ID across reconnects and
+        # don't retry without it when the server returns 404.
+        actual_receive = receive
+        if method == "POST":
+            body_chunks = []
+            more = True
+            while more:
+                message = await receive()
+                body_chunks.append(message.get("body", b""))
+                more = message.get("more_body", False)
+            body = b"".join(body_chunks)
+
+            is_initialize = False
+            try:
+                payload = json.loads(body)
+                if isinstance(payload, dict) and payload.get("method") == "initialize":
+                    is_initialize = True
+                elif isinstance(payload, list):
+                    is_initialize = any(
+                        isinstance(r, dict) and r.get("method") == "initialize"
+                        for r in payload
+                    )
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+            if is_initialize:
+                raw_headers = [
+                    (k, v)
+                    for k, v in scope.get("headers", [])
+                    if k.lower() != b"mcp-session-id"
+                ]
+                scope = {**scope, "headers": raw_headers}
+
+            body_sent = False
+
+            async def replay_receive():
+                nonlocal body_sent
+                if not body_sent:
+                    body_sent = True
+                    return {"type": "http.request", "body": body, "more_body": False}
+                return await receive()
+
+            actual_receive = replay_receive
+
         # Inject CORS headers into responses
         async def send_with_cors(message):
             if message["type"] == "http.response.start":
@@ -158,7 +221,7 @@ def _make_context_middleware(app):
                 message = {**message, "headers": existing}
             await send(message)
 
-        await app(scope, receive, send_with_cors)
+        await app(scope, actual_receive, send_with_cors)
 
     return middleware
 
