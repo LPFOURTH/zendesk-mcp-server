@@ -114,6 +114,11 @@
       "_description": "All existing tools plus community ideas (read-only)",
       "enable": ["list_tickets", "get_ticket", "create_ticket", "update_ticket", "list_articles", "get_article", "create_article", "update_article", "search", "create_release_note", "list_ideas", "get_idea", "search_ideas", "ideas_analytics"],
       "disable": []
+    },
+    "ideas_only": {
+      "_description": "Read-only: community ideas + read tickets/articles. No write operations.",
+      "enable": ["list_ideas", "get_idea", "search_ideas", "ideas_analytics", "list_tickets", "get_ticket", "list_articles", "get_article", "search"],
+      "disable": ["create_ticket", "update_ticket", "create_article", "update_article", "create_release_note"]
     }
   }
 }
