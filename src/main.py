@@ -60,9 +60,9 @@ def _run_http(mcp) -> None:
             f"https://{host}:{port}",
         )
         oauth_metadata = json.dumps({
-            "resource": f"api://{entra_client_id}",
+            "resource": f"{public_url}/mcp/dev",
             "authorization_servers": [
-                f"https://login.microsoftonline.com/{entra_tenant_id}/v2.0"
+                f"{public_url}"
             ],
             "scopes_supported": [
                 f"api://{entra_client_id}/access_as_user",
@@ -72,11 +72,61 @@ def _run_http(mcp) -> None:
             "bearer_methods_supported": ["header"],
         })
 
+        # Our own OIDC discovery that points to Entra but through our proxy
+        entra_oidc_config = json.dumps({
+            "issuer": f"https://login.microsoftonline.com/{entra_tenant_id}/v2.0",
+            "authorization_endpoint": f"{public_url}/oauth/authorize",
+            "token_endpoint": f"https://login.microsoftonline.com/{entra_tenant_id}/oauth2/v2.0/token",
+            "jwks_uri": f"https://login.microsoftonline.com/{entra_tenant_id}/discovery/v2.0/keys",
+            "registration_endpoint": f"{public_url}/oauth/register",
+            "scopes_supported": [
+                f"api://{entra_client_id}/access_as_user",
+                "openid", "profile", "offline_access",
+            ],
+            "response_types_supported": ["code"],
+            "grant_types_supported": ["authorization_code", "refresh_token"],
+            "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic"],
+            "code_challenge_methods_supported": ["S256"],
+        })
+
         async def oauth_protected_resource(request: Request) -> Response:
             return Response(content=oauth_metadata, media_type="application/json")
 
+        async def oidc_discovery(request: Request) -> Response:
+            return Response(content=entra_oidc_config, media_type="application/json")
+
+        async def oauth_authorize_proxy(request: Request) -> Response:
+            """Proxy authorize request to Entra, stripping the resource parameter."""
+            from starlette.responses import RedirectResponse
+            import urllib.parse
+
+            params = dict(request.query_params)
+            params.pop("resource", None)  # Remove resource — Entra v2.0 doesn't support it
+            entra_url = (
+                f"https://login.microsoftonline.com/{entra_tenant_id}/oauth2/v2.0/authorize"
+                f"?{urllib.parse.urlencode(params)}"
+            )
+            return RedirectResponse(entra_url)
+
+        async def oauth_register(request: Request) -> Response:
+            """Fake DCR endpoint — returns the pre-configured client credentials."""
+            body = await request.json()
+            return Response(
+                content=json.dumps({
+                    "client_id": entra_client_id,
+                    "client_secret": os.environ.get("ENTRA_CLIENT_SECRET", ""),
+                    "redirect_uris": body.get("redirect_uris", []),
+                    "client_name": body.get("client_name", "MCP Client"),
+                }),
+                media_type="application/json",
+                status_code=201,
+            )
+
         mcp._custom_starlette_routes.extend([
             Route("/.well-known/oauth-protected-resource", oauth_protected_resource, methods=["GET"]),
+            Route("/.well-known/openid-configuration", oidc_discovery, methods=["GET"]),
+            Route("/oauth/authorize", oauth_authorize_proxy, methods=["GET"]),
+            Route("/oauth/register", oauth_register, methods=["POST"]),
         ])
 
     # Add health routes as custom routes to FastMCP's Starlette app
