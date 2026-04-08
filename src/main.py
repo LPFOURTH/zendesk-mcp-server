@@ -75,7 +75,14 @@ def _run_http(mcp) -> None:
 
 
 def _make_context_middleware(app):
-    """Pure ASGI middleware that extracts Zendesk headers and sets context vars."""
+    """Pure ASGI middleware that extracts Zendesk headers and sets context vars.
+
+    When ENTRA_CLIENT_ID and ENTRA_TENANT_ID are set, /mcp/dev requests
+    require a valid Entra ID JWT. /mcp/prod is unaffected.
+    """
+    from .entra_auth import EntraValidator
+
+    entra_validator = EntraValidator.from_env()
 
     CORS_HEADERS = [
         (b"access-control-allow-origin", b"*"),
@@ -119,6 +126,31 @@ def _make_context_middleware(app):
         if path == "/mcp/dev":
             path_env = "dev"
             scope = {**scope, "path": "/mcp"}
+
+            # OAuth validation for /mcp/dev only
+            if entra_validator and method == "POST":
+                raw_headers = {
+                    k.decode("latin-1").lower(): v.decode("latin-1")
+                    for k, v in scope.get("headers", [])
+                }
+                auth_header = raw_headers.get("authorization", "")
+                error = await entra_validator.validate(auth_header)
+                if error:
+                    await send({
+                        "type": "http.response.start",
+                        "status": 401,
+                        "headers": [
+                            *CORS_HEADERS,
+                            (b"content-type", b"application/json"),
+                            (b"www-authenticate", b'Bearer realm="zendesk-mcp"'),
+                        ],
+                    })
+                    await send({
+                        "type": "http.response.body",
+                        "body": json.dumps({"error": error}).encode(),
+                    })
+                    return
+
         elif path == "/mcp/prod":
             path_env = "prod"
             scope = {**scope, "path": "/mcp"}
