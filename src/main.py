@@ -49,6 +49,31 @@ def _run_http(mcp) -> None:
     async def health(request: Request) -> Response:
         return Response(content=health_body, media_type="application/json")
 
+    # OAuth discovery for /mcp/dev (RFC 9728 Protected Resource Metadata)
+    entra_client_id = os.environ.get("ENTRA_CLIENT_ID")
+    entra_tenant_id = os.environ.get("ENTRA_TENANT_ID")
+
+    if entra_client_id and entra_tenant_id:
+        oauth_metadata = json.dumps({
+            "resource": f"https://{host}:{port}/mcp/dev",
+            "authorization_servers": [
+                f"https://login.microsoftonline.com/{entra_tenant_id}/v2.0"
+            ],
+            "scopes_supported": [
+                f"api://{entra_client_id}/access_as_user",
+                "openid",
+                "profile",
+            ],
+            "bearer_methods_supported": ["header"],
+        })
+
+        async def oauth_protected_resource(request: Request) -> Response:
+            return Response(content=oauth_metadata, media_type="application/json")
+
+        mcp._custom_starlette_routes.extend([
+            Route("/.well-known/oauth-protected-resource", oauth_protected_resource, methods=["GET"]),
+        ])
+
     # Add health routes as custom routes to FastMCP's Starlette app
     mcp._custom_starlette_routes.extend([
         Route("/", health, methods=["GET"]),
@@ -142,7 +167,7 @@ def _make_context_middleware(app):
                         "headers": [
                             *CORS_HEADERS,
                             (b"content-type", b"application/json"),
-                            (b"www-authenticate", b'Bearer realm="zendesk-mcp"'),
+                            (b"www-authenticate", b'Bearer realm="zendesk-mcp", resource_metadata="/.well-known/oauth-protected-resource"'),
                         ],
                     })
                     await send({
