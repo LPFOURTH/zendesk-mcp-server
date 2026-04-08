@@ -60,7 +60,7 @@ def _run_http(mcp) -> None:
             f"https://{host}:{port}",
         )
         oauth_metadata = json.dumps({
-            "resource": f"{public_url}/mcp/dev",
+            "resource": f"api://{entra_client_id}",
             "authorization_servers": [
                 f"https://login.microsoftonline.com/{entra_tenant_id}/v2.0"
             ],
