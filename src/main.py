@@ -54,8 +54,13 @@ def _run_http(mcp) -> None:
     entra_tenant_id = os.environ.get("ENTRA_TENANT_ID")
 
     if entra_client_id and entra_tenant_id:
+        # Use MCP_PUBLIC_URL if set, otherwise construct from host:port
+        public_url = os.environ.get(
+            "MCP_PUBLIC_URL",
+            f"https://{host}:{port}",
+        )
         oauth_metadata = json.dumps({
-            "resource": f"https://{host}:{port}/mcp/dev",
+            "resource": f"{public_url}/mcp/dev",
             "authorization_servers": [
                 f"https://login.microsoftonline.com/{entra_tenant_id}/v2.0"
             ],
