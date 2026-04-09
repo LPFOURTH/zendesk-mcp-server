@@ -5,6 +5,7 @@ import os
 import sys
 
 import dotenv
+import httpx
 
 dotenv.load_dotenv()
 
@@ -76,7 +77,7 @@ def _run_http(mcp) -> None:
         entra_oidc_config = json.dumps({
             "issuer": f"https://login.microsoftonline.com/{entra_tenant_id}/v2.0",
             "authorization_endpoint": f"{public_url}/oauth/authorize",
-            "token_endpoint": f"https://login.microsoftonline.com/{entra_tenant_id}/oauth2/v2.0/token",
+            "token_endpoint": f"{public_url}/oauth/token",
             "jwks_uri": f"https://login.microsoftonline.com/{entra_tenant_id}/discovery/v2.0/keys",
             "registration_endpoint": f"{public_url}/oauth/register",
             "scopes_supported": [
@@ -124,10 +125,31 @@ def _run_http(mcp) -> None:
                 status_code=201,
             )
 
+        async def oauth_token_proxy(request: Request) -> Response:
+            """Proxy token request to Entra, stripping the resource parameter."""
+            import urllib.parse
+
+            body = await request.body()
+            params = dict(urllib.parse.parse_qsl(body.decode()))
+            params.pop("resource", None)  # Remove resource — Entra v2.0 doesn't support it
+
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    f"https://login.microsoftonline.com/{entra_tenant_id}/oauth2/v2.0/token",
+                    data=params,
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                )
+            return Response(
+                content=resp.content,
+                status_code=resp.status_code,
+                media_type="application/json",
+            )
+
         mcp._custom_starlette_routes.extend([
             Route("/.well-known/oauth-protected-resource", oauth_protected_resource, methods=["GET"]),
             Route("/.well-known/openid-configuration", oidc_discovery, methods=["GET"]),
             Route("/oauth/authorize", oauth_authorize_proxy, methods=["GET"]),
+            Route("/oauth/token", oauth_token_proxy, methods=["POST"]),
             Route("/oauth/register", oauth_register, methods=["POST"]),
         ])
 
