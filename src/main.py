@@ -126,12 +126,27 @@ def _run_http(mcp) -> None:
             )
 
         async def oauth_token_proxy(request: Request) -> Response:
-            """Proxy token request to Entra, stripping the resource parameter."""
+            """Proxy token request to Entra, stripping resource and ensuring client_id."""
             import urllib.parse
+            import base64
 
             body = await request.body()
             params = dict(urllib.parse.parse_qsl(body.decode()))
-            params.pop("resource", None)  # Remove resource — Entra v2.0 doesn't support it
+            params.pop("resource", None)
+
+            # Claude Code may send client credentials as Basic auth header
+            # Entra needs them in the body
+            if "client_id" not in params:
+                auth_header = request.headers.get("authorization", "")
+                if auth_header.startswith("Basic "):
+                    decoded = base64.b64decode(auth_header[6:]).decode()
+                    cid, csecret = decoded.split(":", 1)
+                    params["client_id"] = cid
+                    if "client_secret" not in params:
+                        params["client_secret"] = csecret
+                else:
+                    params["client_id"] = entra_client_id
+                    params["client_secret"] = os.environ.get("ENTRA_CLIENT_SECRET", "")
 
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
