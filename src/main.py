@@ -85,6 +85,8 @@ def _run_http(mcp) -> None:
             ],
             "response_types_supported": ["code"],
             "grant_types_supported": ["authorization_code", "refresh_token"],
+            "subject_types_supported": ["pairwise"],
+            "id_token_signing_alg_values_supported": ["RS256"],
             "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic"],
             "code_challenge_methods_supported": ["S256"],
         })
