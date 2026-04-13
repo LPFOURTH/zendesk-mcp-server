@@ -20,7 +20,14 @@ class EntraValidator:
     def __init__(self, client_id: str, tenant_id: str):
         self.client_id = client_id
         self.tenant_id = tenant_id
-        self.issuer = f"https://login.microsoftonline.com/{tenant_id}/v2.0"
+        # Entra issues tokens with different issuers depending on token version:
+        #   v1.0: https://sts.windows.net/{tenant}/
+        #   v2.0: https://login.microsoftonline.com/{tenant}/v2.0
+        self.valid_issuers = [
+            f"https://login.microsoftonline.com/{tenant_id}/v2.0",
+            f"https://sts.windows.net/{tenant_id}/",
+        ]
+        # v2.0 JWKS covers both v1 and v2 tokens
         self.jwks_uri = (
             f"https://login.microsoftonline.com/{tenant_id}/discovery/v2.0/keys"
         )
@@ -58,15 +65,26 @@ class EntraValidator:
 
         try:
             signing_key = self._jwks_client.get_signing_key_from_jwt(token)
+            # Accept both v1 and v2 audience formats
+            valid_audiences = [
+                self.client_id,
+                f"api://{self.client_id}",
+            ]
             decoded = jwt.decode(
                 token,
                 signing_key.key,
                 algorithms=["RS256"],
-                audience=self.client_id,
-                issuer=self.issuer,
+                audience=valid_audiences,
+                issuer=self.valid_issuers,
             )
             # Log successful auth
-            user = decoded.get("preferred_username") or decoded.get("email") or "unknown"
+            user = (
+                decoded.get("preferred_username")
+                or decoded.get("upn")
+                or decoded.get("email")
+                or decoded.get("appid")
+                or "unknown"
+            )
             print(f"[entra-auth] Authenticated: {user}", file=sys.stderr)
             return None  # valid
 
