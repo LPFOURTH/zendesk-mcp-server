@@ -312,8 +312,13 @@ def create_dev_server() -> FastMCP:
     )
 
     obo_service_app_id = os.environ.get("MCP_SERVICE_APP_ID", "fc025b4e-49d4-495f-abe1-f16287a22926")
-    # Accept both raw GUID and api:// prefixed audience (v1.0 tokens use api:// prefix)
-    obo_verifier = JWTVerifier(
+    # Two verifiers for the OBO service app: v2.0 tokens have raw GUID audience,
+    # v1.0 tokens have api:// prefixed audience
+    obo_verifier_v2 = JWTVerifier(
+        jwks_uri=f"https://login.microsoftonline.com/{tenant_id}/discovery/v2.0/keys",
+        audience=obo_service_app_id,
+    )
+    obo_verifier_v1 = JWTVerifier(
         jwks_uri=f"https://login.microsoftonline.com/{tenant_id}/discovery/v2.0/keys",
         audience=f"api://{obo_service_app_id}",
     )
@@ -323,7 +328,7 @@ def create_dev_server() -> FastMCP:
     # tokens may not have delegated scopes like access_as_user
     auth = MultiAuth(
         server=azure_auth,
-        verifiers=[mcp_app_verifier, obo_verifier],
+        verifiers=[mcp_app_verifier, obo_verifier_v2, obo_verifier_v1],
         required_scopes=[],
     )
 
