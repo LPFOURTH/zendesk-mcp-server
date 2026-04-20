@@ -311,9 +311,12 @@ def create_dev_server() -> FastMCP:
     )
 
     # MultiAuth: AzureProvider owns the OAuth routes, JWTVerifier accepts OBO tokens
+    # required_scopes=[] overrides AzureProvider's scope enforcement for the JWTVerifier
+    # path — client_credentials tokens don't have delegated scopes like access_as_user
     auth = MultiAuth(
         server=azure_auth,
         verifiers=[entra_verifier],
+        required_scopes=[],
     )
 
     print(
