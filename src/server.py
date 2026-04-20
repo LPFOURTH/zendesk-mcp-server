@@ -303,20 +303,26 @@ def create_dev_server() -> FastMCP:
         "offline_access",
     ]
 
-    # JWTVerifier: validates raw Entra tokens from custom connectors (OBO flow)
-    # issuer=None: accept both Entra v1.0 (sts.windows.net) and v2.0
-    # (login.microsoftonline.com) tokens. Power Platform sends v1.0 tokens.
-    entra_verifier = JWTVerifier(
+    # JWTVerifiers: validate raw Entra tokens from custom connectors
+    # Two audiences: the MCP app itself (client_secret flow) and the OBO service app
+    # issuer=None: accept both Entra v1.0 (sts.windows.net) and v2.0 tokens
+    mcp_app_verifier = JWTVerifier(
         jwks_uri=f"https://login.microsoftonline.com/{tenant_id}/discovery/v2.0/keys",
         audience=client_id,
     )
 
-    # MultiAuth: AzureProvider owns the OAuth routes, JWTVerifier accepts OBO tokens
-    # required_scopes=[] overrides AzureProvider's scope enforcement for the JWTVerifier
-    # path — client_credentials tokens don't have delegated scopes like access_as_user
+    obo_service_app_id = os.environ.get("MCP_SERVICE_APP_ID", "fc025b4e-49d4-495f-abe1-f16287a22926")
+    obo_verifier = JWTVerifier(
+        jwks_uri=f"https://login.microsoftonline.com/{tenant_id}/discovery/v2.0/keys",
+        audience=obo_service_app_id,
+    )
+
+    # MultiAuth: AzureProvider owns the OAuth routes, JWTVerifiers accept Entra tokens
+    # required_scopes=[] overrides AzureProvider's scope enforcement — OBO/client_credentials
+    # tokens may not have delegated scopes like access_as_user
     auth = MultiAuth(
         server=azure_auth,
-        verifiers=[entra_verifier],
+        verifiers=[mcp_app_verifier, obo_verifier],
         required_scopes=[],
     )
 
