@@ -312,9 +312,10 @@ def create_dev_server() -> FastMCP:
     )
 
     obo_service_app_id = os.environ.get("MCP_SERVICE_APP_ID", "fc025b4e-49d4-495f-abe1-f16287a22926")
+    # Accept both raw GUID and api:// prefixed audience (v1.0 tokens use api:// prefix)
     obo_verifier = JWTVerifier(
         jwks_uri=f"https://login.microsoftonline.com/{tenant_id}/discovery/v2.0/keys",
-        audience=obo_service_app_id,
+        audience=f"api://{obo_service_app_id}",
     )
 
     # MultiAuth: AzureProvider owns the OAuth routes, JWTVerifiers accept Entra tokens
