@@ -255,8 +255,20 @@ def create_prod_server() -> FastMCP:
 
 
 def create_dev_server() -> FastMCP:
-    """AzureProvider with Entra (FastMCP v3). Falls back to no-auth if env vars are missing."""
+    """MultiAuth with AzureProvider + JWTVerifier (FastMCP v3).
+
+    Accepts two types of tokens:
+    1. AzureProvider (MCP-native OAuth) — for Claude Code, Claude Desktop, claude.ai
+       User goes through FastMCP consent + Entra SSO. FastMCP issues its own JWTs.
+    2. JWTVerifier (Entra OBO/direct) — for Copilot Studio custom connector
+       Power Platform handles Azure AD auth. Sends Entra Bearer token directly.
+       User sees just "Allow" in Copilot Studio — no extra screens.
+
+    Falls back to no-auth if env vars are missing.
+    """
+    from fastmcp.server.auth import MultiAuth
     from fastmcp.server.auth.providers.azure import AzureProvider
+    from fastmcp.server.auth.providers.jwt import JWTVerifier
 
     client_id = os.environ.get("ENTRA_CLIENT_ID")
     tenant_id = os.environ.get("ENTRA_TENANT_ID")
@@ -270,7 +282,8 @@ def create_dev_server() -> FastMCP:
         )
         return _create_base_server(name_suffix=" (dev)")
 
-    auth = AzureProvider(
+    # AzureProvider: handles MCP OAuth flow (DCR, authorize, token, consent)
+    azure_auth = AzureProvider(
         client_id=client_id,
         client_secret=client_secret,
         tenant_id=tenant_id,
@@ -281,7 +294,7 @@ def create_dev_server() -> FastMCP:
     )
 
     # Allow DCR clients to request these scopes (unprefixed + OIDC standard)
-    auth.client_registration_options.valid_scopes = [
+    azure_auth.client_registration_options.valid_scopes = [
         "access_as_user",
         f"api://{client_id}/access_as_user",
         "openid",
@@ -290,8 +303,21 @@ def create_dev_server() -> FastMCP:
         "offline_access",
     ]
 
+    # JWTVerifier: validates raw Entra tokens from custom connectors (OBO flow)
+    entra_verifier = JWTVerifier(
+        jwks_uri=f"https://login.microsoftonline.com/{tenant_id}/discovery/v2.0/keys",
+        issuer=f"https://login.microsoftonline.com/{tenant_id}/v2.0",
+        audience=client_id,
+    )
+
+    # MultiAuth: AzureProvider owns the OAuth routes, JWTVerifier accepts OBO tokens
+    auth = MultiAuth(
+        server=azure_auth,
+        verifiers=[entra_verifier],
+    )
+
     print(
-        f"[zendesk-mcp] Dev server: AzureProvider with tenant {tenant_id}",
+        f"[zendesk-mcp] Dev server: MultiAuth (AzureProvider + JWTVerifier) with tenant {tenant_id}",
         file=sys.stderr,
     )
 
