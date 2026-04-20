@@ -194,7 +194,17 @@ def _make_routing_middleware(parent_app, prod_app, dev_app):
                     await send({"type": "http.response.body", "body": oidc_body})
                     return
 
-                inner_scope = {**scope, "path": inner_path, "root_path": scope.get("root_path", "") + prefix}
+                # Inject missing Content-Type and Accept headers if absent
+                # Power Platform custom connectors don't always send these,
+                # but FastMCP Streamable HTTP requires them
+                raw_headers = list(scope.get("headers", []))
+                header_names = {k.decode("latin-1").lower() for k, _ in raw_headers}
+                if "content-type" not in header_names and method == "POST":
+                    raw_headers.append((b"content-type", b"application/json"))
+                if "accept" not in header_names:
+                    raw_headers.append((b"accept", b"application/json, text/event-stream"))
+
+                inner_scope = {**scope, "path": inner_path, "root_path": scope.get("root_path", "") + prefix, "headers": raw_headers}
 
                 # Inject zendesk-environment header for request context
                 headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
