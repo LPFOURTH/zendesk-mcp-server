@@ -304,9 +304,10 @@ def create_dev_server() -> FastMCP:
     ]
 
     # JWTVerifier: validates raw Entra tokens from custom connectors (OBO flow)
+    # issuer=None: accept both Entra v1.0 (sts.windows.net) and v2.0
+    # (login.microsoftonline.com) tokens. Power Platform sends v1.0 tokens.
     entra_verifier = JWTVerifier(
         jwks_uri=f"https://login.microsoftonline.com/{tenant_id}/discovery/v2.0/keys",
-        issuer=f"https://login.microsoftonline.com/{tenant_id}/v2.0",
         audience=client_id,
     )
 
