@@ -291,6 +291,7 @@ def create_dev_server() -> FastMCP:
         required_scopes=["access_as_user"],
         additional_authorize_scopes=["openid", "profile", "offline_access"],
         jwt_signing_key=os.environ.get("MCP_JWT_SIGNING_KEY", ""),
+        require_authorization_consent=False,
     )
 
     # Allow DCR clients to request these scopes (unprefixed + OIDC standard)
