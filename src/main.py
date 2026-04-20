@@ -130,7 +130,19 @@ def _make_routing_middleware(parent_app, prod_app, dev_app):
                 message = {**message, "headers": existing}
             await send(message)
 
-        # Route /.well-known/ to dev app (for OIDC discovery)
+        # Serve RFC 9728 oauth-protected-resource at the server root
+        # (Claude Code looks here based on the origin of the MCP URL)
+        if path == "/.well-known/oauth-protected-resource":
+            public_url = os.environ.get("MCP_PUBLIC_URL", "")
+            resource_body = json.dumps({
+                "resource": f"{public_url}/mcp/dev",
+                "authorization_servers": [f"{public_url}/mcp/dev"],
+            }).encode()
+            await send_with_cors({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"application/json")]})
+            await send({"type": "http.response.body", "body": resource_body})
+            return
+
+        # Route other /.well-known/ paths to dev app (for OIDC discovery)
         if path.startswith("/.well-known/"):
             await dev_app(scope, receive, send_with_cors)
             return
@@ -141,8 +153,8 @@ def _make_routing_middleware(parent_app, prod_app, dev_app):
 
                 # Serve RFC 9728 oauth-protected-resource for MCP clients (e.g. Claude Code)
                 # AzureProvider only serves RFC 8414 oauth-authorization-server natively
-                if inner_path == "/.well-known/oauth-protected-resource" or \
-                   inner_path == "/mcp/.well-known/oauth-protected-resource":
+                if inner_path in ("/.well-known/oauth-protected-resource",
+                                  "/mcp/.well-known/oauth-protected-resource"):
                     public_url = os.environ.get("MCP_PUBLIC_URL", "")
                     resource_body = json.dumps({
                         "resource": f"{public_url}{prefix}",
@@ -150,6 +162,36 @@ def _make_routing_middleware(parent_app, prod_app, dev_app):
                     }).encode()
                     await send_with_cors({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"application/json")]})
                     await send({"type": "http.response.body", "body": resource_body})
+                    return
+
+                # Serve openid-configuration with OIDC-required fields
+                # Claude Code's SDK requests openid-configuration and validates OIDC fields
+                # (jwks_uri, subject_types_supported, id_token_signing_alg_values_supported)
+                # that oauth-authorization-server doesn't include.
+                if inner_path in ("/.well-known/openid-configuration",
+                                  "/mcp/.well-known/openid-configuration"):
+                    public_url = os.environ.get("MCP_PUBLIC_URL", "")
+                    tenant_id = os.environ.get("ENTRA_TENANT_ID", "")
+                    client_id = os.environ.get("ENTRA_CLIENT_ID", "")
+                    oidc_body = json.dumps({
+                        "issuer": f"{public_url}{prefix}",
+                        "authorization_endpoint": f"{public_url}{prefix}/authorize",
+                        "token_endpoint": f"{public_url}{prefix}/token",
+                        "registration_endpoint": f"{public_url}{prefix}/register",
+                        "jwks_uri": f"https://login.microsoftonline.com/{tenant_id}/discovery/v2.0/keys",
+                        "scopes_supported": [
+                            f"api://{client_id}/access_as_user",
+                            "openid", "profile", "email", "offline_access",
+                        ],
+                        "response_types_supported": ["code"],
+                        "grant_types_supported": ["authorization_code", "refresh_token"],
+                        "subject_types_supported": ["pairwise"],
+                        "id_token_signing_alg_values_supported": ["RS256"],
+                        "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic"],
+                        "code_challenge_methods_supported": ["S256"],
+                    }).encode()
+                    await send_with_cors({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"application/json")]})
+                    await send({"type": "http.response.body", "body": oidc_body})
                     return
 
                 inner_scope = {**scope, "path": inner_path, "root_path": scope.get("root_path", "") + prefix}

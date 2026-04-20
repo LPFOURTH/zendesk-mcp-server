@@ -1,0 +1,24 @@
+FROM python:3.12-slim
+
+# Install Azure CLI
+RUN apt-get update && apt-get install -y --no-install-recommends curl gnupg lsb-release && \
+    curl -sL https://aka.ms/InstallAzureCLIDeb | bash && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Export script dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Export script
+COPY export_ideas.py .
+
+# MCP server source (for rebuilding the image)
+COPY zendesk-mcp-server/ ./mcp-server/
+
+# Refresh script
+COPY zendesk-mcp-server/deployment/azure/scripts/refresh-ideas.sh ./refresh-ideas.sh
+RUN chmod +x ./refresh-ideas.sh
+
+CMD ["./refresh-ideas.sh"]

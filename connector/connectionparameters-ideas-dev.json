@@ -1,0 +1,16 @@
+{
+  "_comment": "No authentication required — Ideas server has credentials embedded. This file uses a dummy API key for Copilot Studio connector compatibility.",
+  "api_key": {
+    "type": "securestring",
+    "uiDefinition": {
+      "displayName": "API Key (not required)",
+      "description": "No authentication needed. Enter any value (e.g. 'none') to proceed.",
+      "tooltip": "This connector does not require authentication. Enter any placeholder value.",
+      "constraints": {
+        "tabIndex": 2,
+        "clearText": false,
+        "required": "true"
+      }
+    }
+  }
+}
