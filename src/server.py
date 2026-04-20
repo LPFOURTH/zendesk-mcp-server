@@ -4,7 +4,7 @@ import json
 import os
 import sys
 
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 
 from .tools import tickets, help_center, search, release_notes
 
@@ -197,7 +197,7 @@ ALL_TOOLS = [
 ]
 
 
-def create_server() -> FastMCP:
+def _create_base_server(name_suffix: str = "", auth=None) -> FastMCP:
     config = _load_tools_config()
 
     env_disabled = {
@@ -215,32 +215,29 @@ def create_server() -> FastMCP:
             continue
         enabled_tools.append(tool)
 
-    print(f"[zendesk-mcp] Config source: {config['source']}", file=sys.stderr)
+    print(f"[zendesk-mcp{name_suffix}] Config source: {config['source']}", file=sys.stderr)
     print(
-        f"[zendesk-mcp] Registered {len(enabled_tools)}/{len(ALL_TOOLS)} tools: "
+        f"[zendesk-mcp{name_suffix}] Registered {len(enabled_tools)}/{len(ALL_TOOLS)} tools: "
         f"{', '.join(t['name'] for t in enabled_tools)}",
         file=sys.stderr,
     )
     if all_disabled:
         print(
-            f"[zendesk-mcp] Disabled: {', '.join(sorted(all_disabled))}",
+            f"[zendesk-mcp{name_suffix}] Disabled: {', '.join(sorted(all_disabled))}",
             file=sys.stderr,
         )
 
-    mcp = FastMCP(
-        "Zendesk API",
-        instructions=(
-            "MCP Server for Zendesk API - Tickets & Articles "
-            "(read/create/update only, no delete operations)"
+    kwargs = {
+        "name": f"Zendesk Ideas API{name_suffix}",
+        "instructions": (
+            "MCP Server for Zendesk API — Tickets, Articles & Community Ideas "
+            "(read-only ideas, read/write tickets & articles)"
         ),
-        host=os.environ.get("MCP_HTTP_HOST", "0.0.0.0"),
-        port=int(os.environ.get("MCP_HTTP_PORT", "8000")),
-    )
+    }
+    if auth is not None:
+        kwargs["auth"] = auth
 
-    # Disable DNS rebinding protection for production deployment
-    # (Azure Container Apps uses custom hostnames)
-    if mcp.settings.transport_security:
-        mcp.settings.transport_security.enable_dns_rebinding_protection = False
+    mcp = FastMCP(**kwargs)
 
     for tool_def in enabled_tools:
         fn = tool_def["fn"]
@@ -250,3 +247,57 @@ def create_server() -> FastMCP:
         )(fn)
 
     return mcp
+
+
+def create_prod_server() -> FastMCP:
+    """No auth, service account only."""
+    return _create_base_server(name_suffix=" (prod)")
+
+
+def create_dev_server() -> FastMCP:
+    """AzureProvider with Entra (FastMCP v3). Falls back to no-auth if env vars are missing."""
+    from fastmcp.server.auth.providers.azure import AzureProvider
+
+    client_id = os.environ.get("ENTRA_CLIENT_ID")
+    tenant_id = os.environ.get("ENTRA_TENANT_ID")
+    client_secret = os.environ.get("ENTRA_CLIENT_SECRET")
+    public_url = os.environ.get("MCP_PUBLIC_URL", "")
+
+    if not all([client_id, tenant_id, client_secret, public_url]):
+        print(
+            "[zendesk-mcp] Entra not configured -- dev server has no auth",
+            file=sys.stderr,
+        )
+        return _create_base_server(name_suffix=" (dev)")
+
+    auth = AzureProvider(
+        client_id=client_id,
+        client_secret=client_secret,
+        tenant_id=tenant_id,
+        base_url=f"{public_url}/mcp/dev",
+        required_scopes=["access_as_user"],
+        additional_authorize_scopes=["openid", "profile", "offline_access"],
+        jwt_signing_key=os.environ.get("MCP_JWT_SIGNING_KEY", ""),
+    )
+
+    # Allow DCR clients to request these scopes (unprefixed + OIDC standard)
+    auth.client_registration_options.valid_scopes = [
+        "access_as_user",
+        f"api://{client_id}/access_as_user",
+        "openid",
+        "profile",
+        "email",
+        "offline_access",
+    ]
+
+    print(
+        f"[zendesk-mcp] Dev server: AzureProvider with tenant {tenant_id}",
+        file=sys.stderr,
+    )
+
+    return _create_base_server(name_suffix=" (dev)", auth=auth)
+
+
+# Backward-compatible alias for stdio mode
+def create_server() -> FastMCP:
+    return _create_base_server()

@@ -1,0 +1,28 @@
+{
+  "manifest_version": "0.2",
+  "name": "fourth-zendesk-mcp-extension",
+  "version": "1.0.0",
+  "description": "Fourth Zendesk MCP Server — access Zendesk tickets, articles, search, and release notes",
+  "author": {
+    "name": "Lukasz Pelcner",
+    "email": "Lukasz.Pelcner@fourth.com"
+  },
+  "homepage": "https://github.com/fourth/zendesk-product-mentor",
+  "documentation": "https://github.com/fourth/zendesk-product-mentor",
+  "server": {
+    "type": "node",
+    "entry_point": "proxy.js",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/proxy.js"
+      ],
+      "env": {}
+    }
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fourth/zendesk-product-mentor.git"
+  }
+}

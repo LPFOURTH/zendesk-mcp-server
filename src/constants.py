@@ -107,7 +107,7 @@ ENVIRONMENTS = {
         "author_id": 397321102531,
     },
     "dev": {
-        "base_url": "https://hotschedules1626093811.zendesk.com",
+        "base_url": "https://hotschedules1760632913.zendesk.com",
         "section_id": 34086316530573,
         "permission_group_id": 4407361031693,
         "user_segment_id": None,

@@ -186,7 +186,16 @@ class ZendeskClient:
         per_request = authorization_var.get(None)
         if per_request:
             return per_request
-        creds = f"{self._email}/token:{self._api_token}"
+
+        # Use sandbox credentials when environment is "dev"
+        env_name = zendesk_environment_var.get(None)
+        if env_name == "dev":
+            dev_email = os.environ.get("ZENDESK_DEV_EMAIL", self._email)
+            dev_token = os.environ.get("ZENDESK_DEV_API_TOKEN", self._api_token)
+            creds = f"{dev_email}/token:{dev_token}"
+        else:
+            creds = f"{self._email}/token:{self._api_token}"
+
         encoded = base64.b64encode(creds.encode()).decode()
         return f"Basic {encoded}"
 

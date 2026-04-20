@@ -1,8 +1,33 @@
 from __future__ import annotations
 
 import json
+import sys
 
 from ..zendesk_client import zendesk_client
+
+
+def _get_authenticated_user_email() -> str | None:
+    """Extract the authenticated user's email from the MCP access token.
+
+    Returns the email from Entra JWT claims (preferred_username, email, or upn),
+    or None if no authenticated user is available.
+    """
+    try:
+        from fastmcp.server.dependencies import get_access_token
+        token = get_access_token()
+        if token is None:
+            return None
+        claims = token.claims or {}
+        email = (
+            claims.get("preferred_username")
+            or claims.get("email")
+            or claims.get("upn")
+        )
+        if email:
+            print(f"[zendesk-mcp] Authenticated user: {email}", file=sys.stderr)
+        return email
+    except Exception:
+        return None
 
 
 def _ticket_url(ticket_id: int) -> str:
@@ -92,6 +117,9 @@ async def create_ticket(
         ticket_data["status"] = status
     if requester_id is not None:
         ticket_data["requester_id"] = requester_id
+    elif (user_email := _get_authenticated_user_email()):
+        # Auto-attribute ticket to the authenticated user (requires admin role)
+        ticket_data["requester"] = {"email": user_email}
     if assignee_id is not None:
         ticket_data["assignee_id"] = assignee_id
     if group_id is not None:
@@ -110,7 +138,9 @@ async def create_ticket(
         "status": t.get("status"),
         "priority": t.get("priority"),
         "type": t.get("type"),
+        "requester_id": t.get("requester_id"),
         "created_at": t.get("created_at"),
+        "attributed_to": user_email if not requester_id and (user_email := _get_authenticated_user_email()) else None,
     }
     return f"Ticket #{t['id']} created successfully!\n\n{json.dumps(summary, indent=2)}"
 
