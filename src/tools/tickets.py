@@ -109,7 +109,7 @@ async def create_ticket(
 ) -> str:
     ticket_data: dict = {
         "subject": subject,
-        "comment": {"body": comment},
+        "comment": {"body": comment, "public": True},
     }
     if priority is not None:
         ticket_data["priority"] = priority
