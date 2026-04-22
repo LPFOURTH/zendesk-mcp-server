@@ -263,8 +263,7 @@ def create_dev_server() -> FastMCP:
     Multi-env config: MCP_DEV_ENVIRONMENT selects which set of
     ZENDESK_<NAME>_* env vars to read (default: SANDBOX1).
     """
-    from fastmcp.server.auth import OAuthProxy
-    from .zendesk_token_verifier import ZendeskTokenVerifier
+    from .zendesk_token_verifier import ZendeskOAuthProxy, ZendeskTokenVerifier
 
     env_name = os.environ.get("MCP_DEV_ENVIRONMENT", "SANDBOX1").upper()
     subdomain = os.environ.get(f"ZENDESK_{env_name}_SUBDOMAIN")
@@ -287,7 +286,7 @@ def create_dev_server() -> FastMCP:
 
     token_verifier = ZendeskTokenVerifier(zendesk_subdomain=subdomain)
 
-    auth = OAuthProxy(
+    auth = ZendeskOAuthProxy(
         upstream_authorization_endpoint=f"https://{subdomain}.zendesk.com/oauth/authorizations/new",
         upstream_token_endpoint=f"https://{subdomain}.zendesk.com/oauth/tokens",
         upstream_client_id=oauth_client_id,

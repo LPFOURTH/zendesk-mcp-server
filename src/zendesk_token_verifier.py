@@ -5,8 +5,24 @@ import sys
 import time
 
 import httpx
+from pydantic import AnyHttpUrl
 
+from fastmcp.server.auth import OAuthProxy
 from fastmcp.server.auth.providers.jwt import AccessToken, TokenVerifier
+
+
+class ZendeskOAuthProxy(OAuthProxy):
+    """OAuthProxy that advertises the base_url as the protected resource URL.
+
+    FastMCP's default behavior appends the MCP endpoint path (/mcp) to the
+    base_url when constructing the resource URL, yielding e.g. /mcp/dev/mcp.
+    MCP clients (Claude Code) require the resource URL in metadata to equal
+    the URL they're registered with. Since users register the OAuth-gated
+    URL (/mcp/dev), we override to return base_url unchanged.
+    """
+
+    def _get_resource_url(self, path: str | None = None) -> AnyHttpUrl | None:
+        return self.resource_base_url or self.base_url
 
 
 class ZendeskTokenVerifier(TokenVerifier):
