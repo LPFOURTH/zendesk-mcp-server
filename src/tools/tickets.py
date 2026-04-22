@@ -34,6 +34,20 @@ def _ticket_url(ticket_id: int) -> str:
     return zendesk_client.get_agent_ticket_url(ticket_id)
 
 
+async def _resolve_user(user_id: int | None) -> str | None:
+    """Resolve a Zendesk user ID to 'Name <email>' string."""
+    if not user_id:
+        return None
+    try:
+        result = await zendesk_client.request("GET", f"/users/{user_id}.json")
+        u = result.get("user", {})
+        name = u.get("name", "")
+        email = u.get("email", "")
+        return f"{name} <{email}>" if email else name or None
+    except Exception:
+        return None
+
+
 def _ticket_summary(t: dict) -> dict:
     return {
         "id": t.get("id"),
@@ -88,8 +102,12 @@ async def list_tickets(
 async def get_ticket(id: int) -> str:
     result = await zendesk_client.get_ticket(id)
     t = result.get("ticket") or result
+    requester = await _resolve_user(t.get("requester_id"))
+    assignee = await _resolve_user(t.get("assignee_id"))
     summary = {
         **_ticket_summary(t),
+        "requester": requester,
+        "assignee": assignee,
         "description": (t.get("description") or "")[:500],
         "satisfaction_rating": t.get("satisfaction_rating"),
     }
