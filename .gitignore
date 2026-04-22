@@ -30,3 +30,11 @@ Thumbs.db
 *.swp
 *.swo
 *~
+
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd

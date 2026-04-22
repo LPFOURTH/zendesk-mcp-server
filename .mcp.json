@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "zendesk-sandbox2-project-stdio": {
+      "command": "/Users/boyan.asenov/Projects/Cursor/zendesk-mcp-fourth/.venv/bin/python",
+      "args": ["-m", "src.main"],
+      "cwd": "/Users/boyan.asenov/Projects/Cursor/zendesk-mcp-fourth"
+    }
+  }
+}
