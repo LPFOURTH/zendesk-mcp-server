@@ -187,7 +187,16 @@ class ZendeskClient:
         if per_request:
             return per_request
 
-        # Use sandbox credentials when environment is "dev"
+        # Check FastMCP OAuth token (Architecture C — per-user Zendesk token)
+        try:
+            from fastmcp.server.dependencies import get_access_token
+            access_token = get_access_token()
+            if access_token and access_token.token:
+                return f"Bearer {access_token.token}"
+        except (ImportError, RuntimeError):
+            pass  # Not in an OAuth context (stdio mode, prod path, etc.)
+
+        # Fall back to API key (prod path, stdio mode)
         env_name = zendesk_environment_var.get(None)
         if env_name == "dev":
             dev_email = os.environ.get("ZENDESK_DEV_EMAIL", self._email)
