@@ -142,9 +142,26 @@ def _make_routing_middleware(parent_app, prod_app, dev_app):
             await send({"type": "http.response.body", "body": resource_body})
             return
 
-        # Route other /.well-known/ paths to dev app (for OIDC discovery)
+        # Route other /.well-known/ paths to the appropriate app.
+        # RFC 8414 §3: clients construct the OAuth auth server metadata URL by
+        # inserting /.well-known/oauth-authorization-server between host and
+        # path — e.g. /.well-known/oauth-authorization-server/mcp/dev for an
+        # auth server at /mcp/dev. FastMCP registers the route at
+        # /.well-known/oauth-authorization-server (no suffix), so we strip the
+        # /mcp/dev (or /mcp/prod) suffix before forwarding.
+        # The RFC 9728 /.well-known/oauth-protected-resource/<path> URL does
+        # encode the path suffix in its route, so we don't strip for that one.
         if path.startswith("/.well-known/"):
-            await dev_app(scope, receive, send_with_cors)
+            target_app = dev_app
+            target_path = path
+            if not path.startswith("/.well-known/oauth-protected-resource"):
+                for prefix, (_, app) in PREFIX_MAP.items():
+                    if path.endswith(prefix):
+                        target_app = app
+                        target_path = path[: -len(prefix)]
+                        break
+            inner_scope = {**scope, "path": target_path}
+            await target_app(inner_scope, receive, send_with_cors)
             return
 
         for prefix, (env_name, target_app) in PREFIX_MAP.items():
