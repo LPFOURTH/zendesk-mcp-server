@@ -255,86 +255,54 @@ def create_prod_server() -> FastMCP:
 
 
 def create_dev_server() -> FastMCP:
-    """MultiAuth with AzureProvider + JWTVerifier (FastMCP v3).
+    """Zendesk OAuth via OAuthProxy (Architecture C).
 
-    Accepts two types of tokens:
-    1. AzureProvider (MCP-native OAuth) — for Claude Code, Claude Desktop, claude.ai
-       User goes through FastMCP consent + Entra SSO. FastMCP issues its own JWTs.
-    2. JWTVerifier (Entra OBO/direct) — for Copilot Studio custom connector
-       Power Platform handles Azure AD auth. Sends Entra Bearer token directly.
-       User sees just "Allow" in Copilot Studio — no extra screens.
+    Each user authenticates directly with Zendesk. The MCP server uses their
+    personal Zendesk OAuth token for all API calls. No service account.
 
-    Falls back to no-auth if env vars are missing.
+    Multi-env config: MCP_DEV_ENVIRONMENT selects which set of
+    ZENDESK_<NAME>_* env vars to read (default: SANDBOX1).
     """
-    from fastmcp.server.auth import MultiAuth
-    from fastmcp.server.auth.providers.azure import AzureProvider
-    from fastmcp.server.auth.providers.jwt import JWTVerifier
+    from fastmcp.server.auth import OAuthProxy
+    from .zendesk_token_verifier import ZendeskTokenVerifier
 
-    client_id = os.environ.get("ENTRA_CLIENT_ID")
-    tenant_id = os.environ.get("ENTRA_TENANT_ID")
-    client_secret = os.environ.get("ENTRA_CLIENT_SECRET")
+    env_name = os.environ.get("MCP_DEV_ENVIRONMENT", "SANDBOX1").upper()
+    subdomain = os.environ.get(f"ZENDESK_{env_name}_SUBDOMAIN")
+    oauth_client_id = os.environ.get(f"ZENDESK_{env_name}_OAUTH_CLIENT_ID")
+    oauth_secret = os.environ.get(f"ZENDESK_{env_name}_OAUTH_SECRET")
     public_url = os.environ.get("MCP_PUBLIC_URL", "")
 
-    if not all([client_id, tenant_id, client_secret, public_url]):
+    if not all([subdomain, oauth_client_id, oauth_secret, public_url]):
         print(
-            "[zendesk-mcp] Entra not configured -- dev server has no auth",
+            f"[zendesk-mcp] Zendesk OAuth not configured for {env_name} "
+            f"-- dev server has no auth",
             file=sys.stderr,
         )
         return _create_base_server(name_suffix=" (dev)")
 
-    # AzureProvider: handles MCP OAuth flow (DCR, authorize, token, consent)
-    azure_auth = AzureProvider(
-        client_id=client_id,
-        client_secret=client_secret,
-        tenant_id=tenant_id,
+    # Update the ENVIRONMENTS dict so ZendeskClient resolves the correct
+    # base URL for this sandbox
+    from .constants import ENVIRONMENTS
+    ENVIRONMENTS["dev"]["base_url"] = f"https://{subdomain}.zendesk.com"
+
+    token_verifier = ZendeskTokenVerifier(zendesk_subdomain=subdomain)
+
+    auth = OAuthProxy(
+        upstream_authorization_endpoint=f"https://{subdomain}.zendesk.com/oauth/authorizations/new",
+        upstream_token_endpoint=f"https://{subdomain}.zendesk.com/oauth/tokens",
+        upstream_client_id=oauth_client_id,
+        upstream_client_secret=oauth_secret,
+        token_verifier=token_verifier,
         base_url=f"{public_url}/mcp/dev",
-        required_scopes=["access_as_user"],
-        additional_authorize_scopes=["openid", "profile", "offline_access"],
-        jwt_signing_key=os.environ.get("MCP_JWT_SIGNING_KEY", ""),
+        token_endpoint_auth_method="client_secret_post",
+        valid_scopes=["read", "write"],
         require_authorization_consent=False,
-    )
-
-    # Allow DCR clients to request these scopes (unprefixed + OIDC standard)
-    azure_auth.client_registration_options.valid_scopes = [
-        "access_as_user",
-        f"api://{client_id}/access_as_user",
-        "openid",
-        "profile",
-        "email",
-        "offline_access",
-    ]
-
-    # JWTVerifiers: validate raw Entra tokens from custom connectors
-    # Two audiences: the MCP app itself (client_secret flow) and the OBO service app
-    # issuer=None: accept both Entra v1.0 (sts.windows.net) and v2.0 tokens
-    mcp_app_verifier = JWTVerifier(
-        jwks_uri=f"https://login.microsoftonline.com/{tenant_id}/discovery/v2.0/keys",
-        audience=client_id,
-    )
-
-    obo_service_app_id = os.environ.get("MCP_SERVICE_APP_ID", "fc025b4e-49d4-495f-abe1-f16287a22926")
-    # Two verifiers for the OBO service app: v2.0 tokens have raw GUID audience,
-    # v1.0 tokens have api:// prefixed audience
-    obo_verifier_v2 = JWTVerifier(
-        jwks_uri=f"https://login.microsoftonline.com/{tenant_id}/discovery/v2.0/keys",
-        audience=obo_service_app_id,
-    )
-    obo_verifier_v1 = JWTVerifier(
-        jwks_uri=f"https://login.microsoftonline.com/{tenant_id}/discovery/v2.0/keys",
-        audience=f"api://{obo_service_app_id}",
-    )
-
-    # MultiAuth: AzureProvider owns the OAuth routes, JWTVerifiers accept Entra tokens
-    # required_scopes=[] overrides AzureProvider's scope enforcement — OBO/client_credentials
-    # tokens may not have delegated scopes like access_as_user
-    auth = MultiAuth(
-        server=azure_auth,
-        verifiers=[mcp_app_verifier, obo_verifier_v2, obo_verifier_v1],
-        required_scopes=[],
+        jwt_signing_key=os.environ.get("MCP_JWT_SIGNING_KEY", ""),
     )
 
     print(
-        f"[zendesk-mcp] Dev server: MultiAuth (AzureProvider + JWTVerifier) with tenant {tenant_id}",
+        f"[zendesk-mcp] Dev server: Zendesk OAuth ({env_name}) "
+        f"— subdomain {subdomain}",
         file=sys.stderr,
     )
 
