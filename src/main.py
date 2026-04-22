@@ -50,7 +50,7 @@ def _run_http() -> None:
     async def health(request: Request) -> Response:
         return Response(content=health_body, media_type="application/json")
 
-    # Create two FastMCP instances: prod (no auth) and dev (AzureProvider)
+    # Create two FastMCP instances: prod (no auth) and dev (Zendesk OAuthProxy)
     prod_server = create_prod_server()
     dev_server = create_dev_server()
 
@@ -75,7 +75,7 @@ def _run_http() -> None:
 
     print(f"[zendesk-mcp] HTTP server listening on {host}:{port}", file=sys.stderr)
     print(f"[zendesk-mcp] /mcp/prod  (no auth, service account)", file=sys.stderr)
-    print(f"[zendesk-mcp] /mcp/dev   (Entra OAuth via AzureProvider)", file=sys.stderr)
+    print(f"[zendesk-mcp] /mcp/dev   (Zendesk OAuth via OAuthProxy)", file=sys.stderr)
     print(f"[zendesk-mcp] Health check: http://{host}:{port}/health", file=sys.stderr)
 
     uvicorn.run(app, host=host, port=port, log_level="warning")
@@ -151,49 +151,6 @@ def _make_routing_middleware(parent_app, prod_app, dev_app):
             if path.startswith(prefix):
                 inner_path = path[len(prefix):] or "/mcp"
 
-                # Serve RFC 9728 oauth-protected-resource for MCP clients (e.g. Claude Code)
-                # AzureProvider only serves RFC 8414 oauth-authorization-server natively
-                if inner_path in ("/.well-known/oauth-protected-resource",
-                                  "/mcp/.well-known/oauth-protected-resource"):
-                    public_url = os.environ.get("MCP_PUBLIC_URL", "")
-                    resource_body = json.dumps({
-                        "resource": f"{public_url}{prefix}",
-                        "authorization_servers": [f"{public_url}{prefix}"],
-                    }).encode()
-                    await send_with_cors({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"application/json")]})
-                    await send({"type": "http.response.body", "body": resource_body})
-                    return
-
-                # Serve openid-configuration with OIDC-required fields
-                # Claude Code's SDK requests openid-configuration and validates OIDC fields
-                # (jwks_uri, subject_types_supported, id_token_signing_alg_values_supported)
-                # that oauth-authorization-server doesn't include.
-                if inner_path in ("/.well-known/openid-configuration",
-                                  "/mcp/.well-known/openid-configuration"):
-                    public_url = os.environ.get("MCP_PUBLIC_URL", "")
-                    tenant_id = os.environ.get("ENTRA_TENANT_ID", "")
-                    client_id = os.environ.get("ENTRA_CLIENT_ID", "")
-                    oidc_body = json.dumps({
-                        "issuer": f"{public_url}{prefix}",
-                        "authorization_endpoint": f"{public_url}{prefix}/authorize",
-                        "token_endpoint": f"{public_url}{prefix}/token",
-                        "registration_endpoint": f"{public_url}{prefix}/register",
-                        "jwks_uri": f"https://login.microsoftonline.com/{tenant_id}/discovery/v2.0/keys",
-                        "scopes_supported": [
-                            f"api://{client_id}/access_as_user",
-                            "openid", "profile", "email", "offline_access",
-                        ],
-                        "response_types_supported": ["code"],
-                        "grant_types_supported": ["authorization_code", "refresh_token"],
-                        "subject_types_supported": ["pairwise"],
-                        "id_token_signing_alg_values_supported": ["RS256"],
-                        "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic"],
-                        "code_challenge_methods_supported": ["S256"],
-                    }).encode()
-                    await send_with_cors({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"application/json")]})
-                    await send({"type": "http.response.body", "body": oidc_body})
-                    return
-
                 # Inject missing Content-Type and Accept headers if absent
                 # Power Platform custom connectors don't always send these,
                 # but FastMCP Streamable HTTP requires them
@@ -210,15 +167,16 @@ def _make_routing_middleware(parent_app, prod_app, dev_app):
                 headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
                 headers["zendesk-environment"] = env_name
                 ctx = extract_request_context(headers)
-                # Don't leak MCP auth tokens (Entra/FastMCP Bearer) to Zendesk API
-                # The zendesk client should use its own credentials (API token)
+                # Don't pass raw MCP Bearer token to ZendeskClient as-is.
+                # ZendeskClient reads the upstream Zendesk token from
+                # get_access_token() (via OAuthProxy token swap).
                 ctx["authorization"] = None
                 set_request_context(ctx)
 
                 session_id = headers.get("mcp-session-id", "none")
                 print(f"[zendesk-mcp] {method} {path} (env: {env_name}, session: {session_id})", file=sys.stderr)
 
-                # Route to the correct app — AzureProvider on dev_app enforces auth
+                # Route to the correct app — OAuthProxy on dev_app enforces auth
                 await target_app(inner_scope, receive, send_with_cors)
                 return
 
