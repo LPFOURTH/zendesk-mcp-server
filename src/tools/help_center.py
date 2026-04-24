@@ -1,3 +1,5 @@
+"""MCP tool handlers for Zendesk Help Center articles."""
+
 from __future__ import annotations
 
 import json
@@ -26,6 +28,7 @@ async def list_articles(
     sort_by: str | None = None,
     sort_order: str | None = None,
 ) -> str:
+    """List Help Center articles with optional pagination and sorting."""
     params: dict = {}
     if page is not None:
         params["page"] = page
@@ -46,7 +49,8 @@ async def list_articles(
     return json.dumps(summary, indent=2)
 
 
-async def get_article(id: int) -> str:
+async def get_article(id: int) -> str:  # pylint: disable=redefined-builtin
+    """Fetch a single Help Center article by ID, truncating the body to 2000 chars."""
     result = await zendesk_client.get_article(id)
     a = result.get("article") or result
     summary = {
@@ -56,7 +60,7 @@ async def get_article(id: int) -> str:
     return json.dumps(summary, indent=2)
 
 
-async def create_article(
+async def create_article(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     title: str,
     body: str,
     section_id: int,
@@ -66,6 +70,7 @@ async def create_article(
     user_segment_id: int | None = None,
     label_names: list[str] | None = None,
 ) -> str:
+    """Create a new Help Center article in the specified section."""
     article_data: dict = {"title": title, "body": body}
     if locale is not None:
         article_data["locale"] = locale
@@ -73,17 +78,21 @@ async def create_article(
         article_data["draft"] = draft
     if permission_group_id is not None:
         article_data["permission_group_id"] = permission_group_id
-    article_data["user_segment_id"] = user_segment_id if user_segment_id is not None else None
+    article_data["user_segment_id"] = (
+        user_segment_id if user_segment_id is not None else None
+    )
     if label_names is not None:
         article_data["label_names"] = label_names
 
     result = await zendesk_client.create_article(article_data, section_id)
     a = result.get("article") or result
     summary = _article_summary(a)
-    return f"Article #{a['id']} created successfully!\n\n{json.dumps(summary, indent=2)}"
+    return (
+        f"Article #{a['id']} created successfully!\n\n{json.dumps(summary, indent=2)}"
+    )
 
 
-async def update_article(
+async def update_article(  # pylint: disable=redefined-builtin,too-many-arguments,too-many-positional-arguments
     id: int,
     title: str | None = None,
     body: str | None = None,
@@ -93,6 +102,7 @@ async def update_article(
     user_segment_id: int | None = None,
     label_names: list[str] | None = None,
 ) -> str:
+    """Update an existing Help Center article by ID."""
     article_data: dict = {}
     if title is not None:
         article_data["title"] = title

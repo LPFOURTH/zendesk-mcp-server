@@ -21,6 +21,12 @@
       "operation": "write",
       "description": "Create a new support ticket"
     },
+    "create_it_ticket": {
+      "enabled": true,
+      "category": "tickets",
+      "operation": "write",
+      "description": "Create an IT Support Request ticket using the IT form"
+    },
     "update_ticket": {
       "enabled": true,
       "category": "tickets",

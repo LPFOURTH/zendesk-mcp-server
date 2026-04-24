@@ -13,3 +13,18 @@ dependencies = [
 
 [project.scripts]
 zendesk-mcp = "src.main:main"
+
+[tool.isort]
+profile = "black"
+line_length = 120
+
+[tool.black]
+target-version = ["py311"]
+line-length = 120
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.pylint.format]
+max-line-length = 120

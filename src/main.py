@@ -1,3 +1,5 @@
+"""Entry point for the Zendesk MCP server; dispatches stdio or HTTP transport."""
+
 from __future__ import annotations
 
 import json
@@ -5,14 +7,41 @@ import os
 import sys
 
 import dotenv
+import uvicorn
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.routing import Route
 
+# Must run before local imports: ZendeskClient() is a module-level singleton that
+# reads ZENDESK_* env vars in __init__, so .env must be loaded first.
 dotenv.load_dotenv()
 
-from .server import create_server
+# pylint: disable=wrong-import-position
 from .request_context import extract_request_context, set_request_context
+from .server import create_server
+
+# pylint: enable=wrong-import-position
+
+_CORS_HEADERS = [
+    (b"access-control-allow-origin", b"*"),
+    (b"access-control-expose-headers", b"Mcp-Session-Id"),
+]
+
+_PREFLIGHT_HEADERS = [
+    (b"access-control-allow-origin", b"*"),
+    (b"access-control-allow-methods", b"GET, POST, DELETE, OPTIONS"),
+    (
+        b"access-control-allow-headers",
+        b"Content-Type, Authorization, Mcp-Session-Id, mcp-session-id, "
+        b"X-Zendesk-Subdomain, X-Zendesk-Base-Url, X-Zendesk-Environment, "
+        b"zendesk-subdomain, zendesk-base-url, zendesk-environment",
+    ),
+    (b"access-control-max-age", b"86400"),
+]
 
 
 def main() -> None:
+    """Dispatch to stdio or HTTP transport based on MCP_TRANSPORT env / CLI flag."""
     transport = os.environ.get("MCP_TRANSPORT", "stdio")
     if "--transport" in sys.argv:
         idx = sys.argv.index("--transport")
@@ -29,11 +58,6 @@ def main() -> None:
 
 
 def _run_http(mcp) -> None:
-    import uvicorn
-    from starlette.requests import Request
-    from starlette.responses import Response
-    from starlette.routing import Route
-
     port = int(os.environ.get("MCP_HTTP_PORT", "8000"))
     host = os.environ.get("MCP_HTTP_HOST", "0.0.0.0")
 
@@ -46,14 +70,16 @@ def _run_http(mcp) -> None:
         }
     )
 
-    async def health(request: Request) -> Response:
+    async def health(_request: Request) -> Response:
         return Response(content=health_body, media_type="application/json")
 
     # Add health routes as custom routes to FastMCP's Starlette app
-    mcp._custom_starlette_routes.extend([
-        Route("/", health, methods=["GET"]),
-        Route("/health", health, methods=["GET"]),
-    ])
+    mcp._custom_starlette_routes.extend(  # pylint: disable=protected-access
+        [
+            Route("/", health, methods=["GET"]),
+            Route("/health", health, methods=["GET"]),
+        ]
+    )
 
     # Build the MCP Starlette app (includes lifespan for session manager)
     starlette_app = mcp.streamable_http_app()
@@ -77,23 +103,6 @@ def _run_http(mcp) -> None:
 def _make_context_middleware(app):
     """Pure ASGI middleware that extracts Zendesk headers and sets context vars."""
 
-    CORS_HEADERS = [
-        (b"access-control-allow-origin", b"*"),
-        (b"access-control-expose-headers", b"Mcp-Session-Id"),
-    ]
-
-    PREFLIGHT_HEADERS = [
-        (b"access-control-allow-origin", b"*"),
-        (b"access-control-allow-methods", b"GET, POST, DELETE, OPTIONS"),
-        (
-            b"access-control-allow-headers",
-            b"Content-Type, Authorization, Mcp-Session-Id, mcp-session-id, "
-            b"X-Zendesk-Subdomain, X-Zendesk-Base-Url, X-Zendesk-Environment, "
-            b"zendesk-subdomain, zendesk-base-url, zendesk-environment",
-        ),
-        (b"access-control-max-age", b"86400"),
-    ]
-
     async def middleware(scope, receive, send):
         if scope["type"] != "http":
             await app(scope, receive, send)
@@ -108,7 +117,7 @@ def _make_context_middleware(app):
                 {
                     "type": "http.response.start",
                     "status": 204,
-                    "headers": PREFLIGHT_HEADERS,
+                    "headers": _PREFLIGHT_HEADERS,
                 }
             )
             await send({"type": "http.response.body", "body": b""})
@@ -154,7 +163,7 @@ def _make_context_middleware(app):
         async def send_with_cors(message):
             if message["type"] == "http.response.start":
                 existing = list(message.get("headers", []))
-                existing.extend(CORS_HEADERS)
+                existing.extend(_CORS_HEADERS)
                 message = {**message, "headers": existing}
             await send(message)
 
