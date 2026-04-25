@@ -20,6 +20,13 @@ playwright/
 playwright-report/
 test-results/
 
+# Ideas cache (copied in for Docker build)
+ideas_latest.json
+
+# Python
+__pycache__/
+*.pyc
+
 # OS files
 .DS_Store
 Thumbs.db

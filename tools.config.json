@@ -62,6 +62,30 @@
       "category": "release_notes",
       "operation": "write",
       "description": "Create a release note article from structured markdown using UK or US template"
+    },
+    "list_ideas": {
+      "enabled": true,
+      "category": "community",
+      "operation": "read",
+      "description": "List community Ideas posts with filtering"
+    },
+    "get_idea": {
+      "enabled": true,
+      "category": "community",
+      "operation": "read",
+      "description": "Get a specific community Idea by ID"
+    },
+    "search_ideas": {
+      "enabled": true,
+      "category": "community",
+      "operation": "read",
+      "description": "Search community Ideas by keyword"
+    },
+    "ideas_analytics": {
+      "enabled": true,
+      "category": "community",
+      "operation": "read",
+      "description": "Summary analytics for community Ideas"
     }
   },
 
@@ -72,8 +96,8 @@
       "disable": ["create_ticket", "update_ticket", "create_article", "update_article"]
     },
     "full": {
-      "_description": "All available tools (read + write, still no delete)",
-      "enable": ["list_tickets", "get_ticket", "create_ticket", "update_ticket", "list_articles", "get_article", "create_article", "update_article", "search", "create_release_note"],
+      "_description": "All available tools (read + write, still no delete) — includes Ideas",
+      "enable": ["list_tickets", "get_ticket", "create_ticket", "update_ticket", "list_articles", "get_article", "create_article", "update_article", "search", "create_release_note", "list_ideas", "get_idea", "search_ideas", "ideas_analytics"],
       "disable": []
     },
     "tickets_only": {
@@ -85,6 +109,16 @@
       "_description": "Only Help Center article operations",
       "enable": ["list_articles", "get_article", "create_article", "update_article", "search", "create_release_note"],
       "disable": ["list_tickets", "get_ticket", "create_ticket", "update_ticket"]
+    },
+    "with_ideas": {
+      "_description": "All existing tools plus community ideas (read-only)",
+      "enable": ["list_tickets", "get_ticket", "create_ticket", "update_ticket", "list_articles", "get_article", "create_article", "update_article", "search", "create_release_note", "list_ideas", "get_idea", "search_ideas", "ideas_analytics"],
+      "disable": []
+    },
+    "ideas_only": {
+      "_description": "Read-only: community ideas + read tickets/articles. No write operations.",
+      "enable": ["list_ideas", "get_idea", "search_ideas", "ideas_analytics", "list_tickets", "get_ticket", "list_articles", "get_article", "search"],
+      "disable": ["create_ticket", "update_ticket", "create_article", "update_article", "create_release_note"]
     }
   }
 }

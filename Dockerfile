@@ -11,6 +11,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY --chown=mcpuser:mcpuser tools.config.json .
 COPY --chown=mcpuser:mcpuser src/ ./src/
 
+# Community Ideas pre-computed data (optional — server works without it)
+COPY --chown=mcpuser:mcpuser ideas_latest.jso[n] ./
+
 USER mcpuser
 
 ENV MCP_TRANSPORT=http
