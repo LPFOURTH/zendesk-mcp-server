@@ -345,7 +345,40 @@ def create_dev_server() -> FastMCP:
 
     token_verifier = ZendeskTokenVerifier(zendesk_subdomain=subdomain)
 
-    auth = ZendeskOAuthProxy(
+    # Persistent OAuth state on Cosmos DB (see spec
+    # docs/superpowers/specs/2026-04-28-persistent-oauth-storage-design.md).
+    # Falls back to FastMCP's default file-based store (wiped on each deploy)
+    # if Cosmos isn't configured — useful for local dev.
+    cosmos_endpoint = os.environ.get("COSMOS_ENDPOINT")
+    storage_key = os.environ.get("MCP_STORAGE_ENCRYPTION_KEY")
+    client_storage = None
+    if cosmos_endpoint and storage_key:
+        from cryptography.fernet import Fernet
+        from key_value.aio.wrappers.encryption import FernetEncryptionWrapper
+
+        from .storage.cosmos_store import CosmosKeyValueStore
+
+        cosmos_store = CosmosKeyValueStore(
+            endpoint=cosmos_endpoint,
+            database="mcp",
+            container="oauth_state",
+        )
+        client_storage = FernetEncryptionWrapper(
+            key_value=cosmos_store,
+            fernet=Fernet(storage_key.encode()),
+        )
+        print(
+            "[zendesk-mcp] OAuth state: Cosmos DB (persistent, Fernet-encrypted)",
+            file=sys.stderr,
+        )
+    else:
+        print(
+            "[zendesk-mcp] OAuth state: FastMCP default (file-based, wiped on deploy "
+            "— set COSMOS_ENDPOINT and MCP_STORAGE_ENCRYPTION_KEY for persistence)",
+            file=sys.stderr,
+        )
+
+    auth_kwargs: dict[str, object] = dict(
         upstream_authorization_endpoint=f"https://{subdomain}.zendesk.com/oauth/authorizations/new",
         upstream_token_endpoint=f"https://{subdomain}.zendesk.com/oauth/tokens",
         upstream_client_id=oauth_client_id,
@@ -357,6 +390,10 @@ def create_dev_server() -> FastMCP:
         require_authorization_consent=False,
         jwt_signing_key=os.environ.get("MCP_JWT_SIGNING_KEY", ""),
     )
+    if client_storage is not None:
+        auth_kwargs["client_storage"] = client_storage
+
+    auth = ZendeskOAuthProxy(**auth_kwargs)
 
     print(
         f"[zendesk-mcp] Dev server: Zendesk OAuth ({env_name}) "
