@@ -10,6 +10,7 @@ RESOURCE_GROUP="fourth-ai-prod"
 ACR_NAME="fourthzendeskmcp"
 ENVIRONMENT_NAME="fourth-ai-env"
 APP_NAME="fourth-zendesk-mcp-server"
+KV_NAME="${KV_NAME:-fourth-mcp-kv}"
 IMAGE_TAG="${1:-latest}"
 
 # Zendesk credentials (pass as args or set before running)
@@ -37,6 +38,22 @@ echo ""
 echo "=== Checking if Container App exists ==="
 if az containerapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" &>/dev/null; then
   echo "Container App exists. Updating..."
+
+  # Bind Key Vault secrets via the Container App's managed identity.
+  # Idempotent — runs every deploy. Requires that 4-provision-oauth-storage.sh
+  # has been run at least once and that the system-assigned MI has
+  # Key Vault Secrets User on $KV_NAME.
+  echo ""
+  echo "=== Binding Key Vault secrets ==="
+  az containerapp secret set \
+    --name "$APP_NAME" \
+    --resource-group "$RESOURCE_GROUP" \
+    --secrets \
+      "jwt-signing-key=keyvaultref:https://${KV_NAME}.vault.azure.net/secrets/mcp-jwt-signing-key,identityref:system" \
+      "storage-encryption-key=keyvaultref:https://${KV_NAME}.vault.azure.net/secrets/mcp-storage-encryption-key,identityref:system" \
+      "cosmos-endpoint=keyvaultref:https://${KV_NAME}.vault.azure.net/secrets/cosmos-endpoint,identityref:system" \
+    --output table
+
   az containerapp update \
     --name "$APP_NAME" \
     --resource-group "$RESOURCE_GROUP" \
@@ -44,6 +61,9 @@ if az containerapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" &>
     --set-env-vars \
       "DEPLOY_TIME=$(date +%s)" \
       "DEPLOY_TAG=$IMAGE_TAG" \
+      "MCP_JWT_SIGNING_KEY=secretref:jwt-signing-key" \
+      "MCP_STORAGE_ENCRYPTION_KEY=secretref:storage-encryption-key" \
+      "COSMOS_ENDPOINT=secretref:cosmos-endpoint" \
     --output table
 else
   echo "Container App does not exist. Creating..."
