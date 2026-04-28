@@ -9,3 +9,4 @@ azure-cosmos>=4.7.0
 azure-identity>=1.17.0
 cryptography>=42.0.0
 py-key-value-aio>=0.4.4
+pytest-asyncio>=0.23

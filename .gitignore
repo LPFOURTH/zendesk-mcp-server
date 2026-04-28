@@ -26,6 +26,10 @@ ideas_latest.json
 # Python
 __pycache__/
 *.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
 
 # OS files
 .DS_Store
