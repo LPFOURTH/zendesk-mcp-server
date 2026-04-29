@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from typing import Any
 
@@ -22,6 +23,19 @@ from key_value.aio.errors import DeserializationError
 from key_value.aio.stores.base import BaseStore
 
 logger = logging.getLogger(__name__)
+
+
+def _doc_id(*, collection: str, key: str) -> str:
+    """Cosmos-safe document id (also used as partition key).
+
+    SHA-256 hex of the compound key. Cosmos rejects document IDs containing
+    `/`, `\\`, `?`, `#` — but FastMCP's OAuthProxy supports CIMD where
+    client_id IS a URL containing those characters. Hashing avoids the
+    constraint without losing information (raw collection/key are stored as
+    separate document properties).
+    """
+    raw = compound_key(collection=collection, key=key)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 class CosmosKeyValueStore(BaseStore):
@@ -77,7 +91,7 @@ class CosmosKeyValueStore(BaseStore):
     async def _get_managed_entry(
         self, *, key: str, collection: str
     ) -> ManagedEntry | None:
-        doc_id = compound_key(collection=collection, key=key)
+        doc_id = _doc_id(collection=collection, key=key)
         try:
             container = await self._get_container()
             item = await container.read_item(item=doc_id, partition_key=doc_id)
@@ -100,7 +114,7 @@ class CosmosKeyValueStore(BaseStore):
     async def _put_managed_entry(
         self, *, key: str, collection: str, managed_entry: ManagedEntry
     ) -> None:
-        doc_id = compound_key(collection=collection, key=key)
+        doc_id = _doc_id(collection=collection, key=key)
         json_str: str = self._adapter.dump_json(
             entry=managed_entry, key=key, collection=collection
         )
@@ -121,7 +135,7 @@ class CosmosKeyValueStore(BaseStore):
 
     @override
     async def _delete_managed_entry(self, *, key: str, collection: str) -> bool:
-        doc_id = compound_key(collection=collection, key=key)
+        doc_id = _doc_id(collection=collection, key=key)
         try:
             container = await self._get_container()
             await container.delete_item(item=doc_id, partition_key=doc_id)
