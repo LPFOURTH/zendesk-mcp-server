@@ -21,12 +21,13 @@ echo "=== Step 1/6: Ensure Key Vault exists ==="
 if az keyvault show --name "$KV_NAME" --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
   echo "Key Vault $KV_NAME already exists."
 else
+  # soft-delete is on by default in modern Azure (no flag needed); purge
+  # protection is opt-in.
   az keyvault create \
     --name "$KV_NAME" \
     --resource-group "$RESOURCE_GROUP" \
     --location "$LOCATION" \
     --enable-rbac-authorization true \
-    --enable-soft-delete true \
     --enable-purge-protection true \
     --output table
 fi

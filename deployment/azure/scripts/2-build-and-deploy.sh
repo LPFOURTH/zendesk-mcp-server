@@ -52,6 +52,8 @@ if az containerapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" &>
       "jwt-signing-key=keyvaultref:https://${KV_NAME}.vault.azure.net/secrets/mcp-jwt-signing-key,identityref:system" \
       "storage-encryption-key=keyvaultref:https://${KV_NAME}.vault.azure.net/secrets/mcp-storage-encryption-key,identityref:system" \
       "cosmos-endpoint=keyvaultref:https://${KV_NAME}.vault.azure.net/secrets/cosmos-endpoint,identityref:system" \
+      "zendesk-prod-oauth-client-id=keyvaultref:https://${KV_NAME}.vault.azure.net/secrets/zendesk-prod-oauth-client-id,identityref:system" \
+      "zendesk-prod-oauth-secret=keyvaultref:https://${KV_NAME}.vault.azure.net/secrets/zendesk-prod-oauth-secret,identityref:system" \
     --output table
 
   az containerapp update \
@@ -64,6 +66,10 @@ if az containerapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" &>
       "MCP_JWT_SIGNING_KEY=secretref:jwt-signing-key" \
       "MCP_STORAGE_ENCRYPTION_KEY=secretref:storage-encryption-key" \
       "COSMOS_ENDPOINT=secretref:cosmos-endpoint" \
+      "MCP_DEV_ENVIRONMENT=PROD" \
+      "ZENDESK_PROD_SUBDOMAIN=hotschedules" \
+      "ZENDESK_PROD_OAUTH_CLIENT_ID=secretref:zendesk-prod-oauth-client-id" \
+      "ZENDESK_PROD_OAUTH_SECRET=secretref:zendesk-prod-oauth-secret" \
     --output table
 else
   echo "Container App does not exist. Creating..."
