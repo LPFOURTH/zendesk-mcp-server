@@ -74,6 +74,28 @@ JSON
   --output table
 
 echo ""
+echo "=== Step 4.5: Grant current principal Storage Blob Data Contributor (for seed step) ==="
+# `--auth-mode login` needs data-plane access. Owner on the RG is control-plane only.
+PRINCIPAL_ID=$(az ad signed-in-user show --query id -o tsv 2>/dev/null || true)
+PRINCIPAL_TYPE="User"
+if [ -z "$PRINCIPAL_ID" ]; then
+  # Running as a service principal (CI)
+  PRINCIPAL_ID=$(az account show --query "user.name" -o tsv)
+  PRINCIPAL_TYPE="ServicePrincipal"
+fi
+STORAGE_ID=$(az storage account show --name "$ACCOUNT" --resource-group "$RESOURCE_GROUP" --query id -o tsv)
+az role assignment create \
+  --assignee-object-id "$PRINCIPAL_ID" \
+  --assignee-principal-type "$PRINCIPAL_TYPE" \
+  --role "Storage Blob Data Contributor" \
+  --scope "$STORAGE_ID" \
+  --output none 2>&1 | tee /tmp/seed-grant.log || \
+  grep -q "RoleAssignmentExists" /tmp/seed-grant.log
+echo "Granted (or already had) Storage Blob Data Contributor."
+echo "Note: RBAC propagation can take ~1 min; sleeping 60s before seed..."
+sleep 60
+
+echo ""
 echo "=== Step 5: Seed initial blob from $SEED_JSON ==="
 if [ -f "$SEED_JSON" ]; then
   az storage blob upload \
