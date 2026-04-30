@@ -3,39 +3,34 @@ set -euo pipefail
 
 # ============================================================
 # Refresh Ideas Data
-# Runs inside the Container App Job container.
-# Fetches latest ideas from Zendesk, rebuilds MCP server image.
+# Runs inside the fourth-ideas-refresh Container App Job.
+# Fetches ideas from Zendesk → uploads JSON to blob.
 # ============================================================
 
-RESOURCE_GROUP="fourth-ai-prod"
-ACR_NAME="fourthzendeskmcp"
-APP_NAME="fourth-zendesk-mcp-ideas-dev"
+ACCOUNT="${IDEAS_STORAGE_ACCOUNT:-fourthzendeskideas}"
+CONTAINER="${IDEAS_STORAGE_CONTAINER:-ideas-data}"
+BLOB="${IDEAS_BLOB_NAME:-ideas_latest.json}"
 
-echo "=== Step 1: Fetch ideas from Zendesk ==="
+echo "=== Step 1: Authenticate via managed identity ==="
+az login --identity --output none
+
+echo ""
+echo "=== Step 2: Fetch ideas from Zendesk ==="
 python3 /app/export_ideas.py --export-json /tmp/ideas_latest.json --db /tmp/ideas.db
 echo "JSON size: $(du -h /tmp/ideas_latest.json | cut -f1)"
 
 echo ""
-echo "=== Step 2: Prepare MCP server build context ==="
-cp /tmp/ideas_latest.json /app/mcp-server/ideas_latest.json
-
-echo ""
-echo "=== Step 3: Build new MCP server image ==="
-az acr build \
-  --registry "$ACR_NAME" \
-  --image "$APP_NAME:latest" \
-  --file /app/mcp-server/Dockerfile \
-  /app/mcp-server
-
-echo ""
-echo "=== Step 4: Redeploy MCP server ==="
-az containerapp update \
-  --name "$APP_NAME" \
-  --resource-group "$RESOURCE_GROUP" \
-  --image "${ACR_NAME}.azurecr.io/${APP_NAME}:latest" \
-  --set-env-vars "DEPLOY_TIME=$(date +%s)" "DATA_REFRESHED=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  --output table
+echo "=== Step 3: Upload to blob ==="
+az storage blob upload \
+  --account-name "$ACCOUNT" \
+  --container-name "$CONTAINER" \
+  --name "$BLOB" \
+  --file /tmp/ideas_latest.json \
+  --auth-mode login \
+  --overwrite \
+  --output none
 
 echo ""
 echo "=== Refresh complete ==="
+echo "Blob:      https://${ACCOUNT}.blob.core.windows.net/${CONTAINER}/${BLOB}"
 echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
