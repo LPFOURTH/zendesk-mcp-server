@@ -30,6 +30,15 @@ def _make_blob_client(account: str, container: str, name: str):
     )
 
 
+def _seconds_until_next_utc_noon(now: datetime | None = None) -> int:
+    """Seconds from `now` until the next 12:00:00 UTC. Always >0."""
+    now = now or datetime.now(timezone.utc)
+    target = datetime.combine(now.date(), dtime(12, 0, 0), tzinfo=timezone.utc)
+    if target <= now:
+        target += timedelta(days=1)
+    return int((target - now).total_seconds())
+
+
 class IdeasCache:
     def __init__(
         self,
@@ -58,6 +67,7 @@ class IdeasCache:
             ok = self._try_load_from_blob()
             if not ok and file_path:
                 self._load_from_file(file_path)
+            self.start_daily_reload()
         elif file_path:
             self._load_from_file(file_path)
 
@@ -86,6 +96,60 @@ class IdeasCache:
                 file=sys.stderr,
             )
             return False
+
+    def reload_from_blob_if_changed(self) -> bool:
+        """Check the blob ETag; if it changed, download and swap. Returns True if swapped."""
+        if not self._blob_configured():
+            return False
+        try:
+            client = _make_blob_client(self._blob_account, self._blob_container, self._blob_name)
+            etag = client.get_blob_properties().etag
+            if etag == self._blob_etag:
+                print(f"[ideas-cache] Blob ETag unchanged ({etag}); no reload", file=sys.stderr)
+                return False
+            data = json.loads(client.download_blob().readall())
+
+            new_posts = data.get("posts", [])
+            new_by_id = {p["id"]: p for p in new_posts}
+
+            with self._lock:
+                self.posts = new_posts
+                self.posts_by_id = new_by_id
+                self.exported_at = data.get("exported_at", "")
+                self.total_count = data.get("total_posts", 0)
+                self.archived_count = data.get("archived_posts", 0)
+                self._blob_etag = etag
+            print(
+                f"[ideas-cache] Reloaded {self.total_count} posts from blob "
+                f"(new etag={etag})",
+                file=sys.stderr,
+            )
+            return True
+        except Exception as exc:
+            print(
+                f"[ideas-cache] Reload failed ({type(exc).__name__}: {exc}); "
+                f"keeping current cache",
+                file=sys.stderr,
+            )
+            return False
+
+    def start_daily_reload(self) -> None:
+        """Spawn a daemon thread that reloads from blob every 12:00 UTC. Idempotent."""
+        if not self._blob_configured():
+            return
+        if self._reload_thread and self._reload_thread.is_alive():
+            return
+
+        def loop() -> None:
+            while True:
+                sleep_s = _seconds_until_next_utc_noon()
+                time.sleep(sleep_s)
+                self.reload_from_blob_if_changed()
+
+        t = threading.Thread(target=loop, name="ideas-cache-reloader", daemon=True)
+        t.start()
+        self._reload_thread = t
+        print("[ideas-cache] Daily 12:00 UTC reload thread started", file=sys.stderr)
 
     def _load_from_file(self, path: str) -> None:
         try:

@@ -1,5 +1,7 @@
 import json
 import os
+from datetime import datetime, timezone
+
 import pytest
 
 
@@ -181,3 +183,71 @@ def test_cache_falls_back_to_file_when_blob_fails(sample_json, sample_payload, m
     # sample_json has 3 posts; blob payload would have had 1
     assert cache.total_count == 3
     assert cache.get_by_id(1)["title"] == "Top voted idea"
+
+
+def test_reload_swaps_when_etag_changes(sample_payload, monkeypatch):
+    """When the blob ETag changes, reload swaps in new data atomically."""
+    from src.ideas_cache import IdeasCache
+
+    fake_blob = MagicMock()
+    fake_blob.download_blob.return_value.readall.return_value = json.dumps(sample_payload).encode()
+    fake_blob.get_blob_properties.return_value.etag = '"etag-1"'
+    monkeypatch.setattr("src.ideas_cache._make_blob_client", MagicMock(return_value=fake_blob))
+
+    cache = IdeasCache(blob_account="acct", blob_container="c", blob_name="ideas.json")
+    assert cache.total_count == 1
+
+    new_payload = dict(sample_payload, total_posts=2, posts=sample_payload["posts"] * 2)
+    new_payload["posts"][1] = dict(sample_payload["posts"][0], id=43)
+    fake_blob.download_blob.return_value.readall.return_value = json.dumps(new_payload).encode()
+    fake_blob.get_blob_properties.return_value.etag = '"etag-2"'
+
+    swapped = cache.reload_from_blob_if_changed()
+    assert swapped is True
+    assert cache.total_count == 2
+    assert cache.get_by_id(43) is not None
+
+
+def test_reload_noop_when_etag_unchanged(sample_payload, monkeypatch):
+    from src.ideas_cache import IdeasCache
+
+    fake_blob = MagicMock()
+    fake_blob.download_blob.return_value.readall.return_value = json.dumps(sample_payload).encode()
+    fake_blob.get_blob_properties.return_value.etag = '"etag-1"'
+    monkeypatch.setattr("src.ideas_cache._make_blob_client", MagicMock(return_value=fake_blob))
+
+    cache = IdeasCache(blob_account="acct", blob_container="c", blob_name="ideas.json")
+    download_calls_before = fake_blob.download_blob.call_count
+
+    swapped = cache.reload_from_blob_if_changed()
+    assert swapped is False
+    # ETag check used get_blob_properties; download should NOT have been called again.
+    assert fake_blob.download_blob.call_count == download_calls_before
+
+
+def test_reload_keeps_cache_on_failure(sample_payload, monkeypatch):
+    from src.ideas_cache import IdeasCache
+
+    fake_blob = MagicMock()
+    fake_blob.download_blob.return_value.readall.return_value = json.dumps(sample_payload).encode()
+    fake_blob.get_blob_properties.return_value.etag = '"etag-1"'
+    monkeypatch.setattr("src.ideas_cache._make_blob_client", MagicMock(return_value=fake_blob))
+
+    cache = IdeasCache(blob_account="acct", blob_container="c", blob_name="ideas.json")
+    assert cache.total_count == 1
+
+    fake_blob.get_blob_properties.side_effect = RuntimeError("transient")
+    swapped = cache.reload_from_blob_if_changed()
+    assert swapped is False
+    assert cache.total_count == 1  # unchanged on failure
+
+
+def test_seconds_until_next_utc_noon():
+    from src.ideas_cache import _seconds_until_next_utc_noon
+
+    # 11:00 UTC → 1 hour to noon
+    assert _seconds_until_next_utc_noon(datetime(2026, 4, 30, 11, 0, 0, tzinfo=timezone.utc)) == 3600
+    # 12:00 UTC exactly → tomorrow's noon (24h)
+    assert _seconds_until_next_utc_noon(datetime(2026, 4, 30, 12, 0, 0, tzinfo=timezone.utc)) == 86400
+    # 13:00 UTC → 23h to next noon
+    assert _seconds_until_next_utc_noon(datetime(2026, 4, 30, 13, 0, 0, tzinfo=timezone.utc)) == 23 * 3600
