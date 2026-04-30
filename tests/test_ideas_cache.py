@@ -160,6 +160,7 @@ def test_cache_loads_from_blob_when_configured(sample_payload, monkeypatch):
 
     fake_blob = MagicMock()
     fake_blob.download_blob.return_value.readall.return_value = json.dumps(sample_payload).encode()
+    fake_blob.download_blob.return_value.properties.etag = '"etag-1"'
     fake_blob.get_blob_properties.return_value.etag = '"etag-1"'
 
     fake_factory = MagicMock(return_value=fake_blob)
@@ -169,7 +170,27 @@ def test_cache_loads_from_blob_when_configured(sample_payload, monkeypatch):
     assert cache.total_count == 1
     assert cache.exported_at == "2026-04-30T11:00:00Z"
     assert cache.get_by_id(42)["title"] == "Loaded from blob"
+    assert cache._blob_etag == '"etag-1"'
     fake_factory.assert_called_once_with("acct", "c", "ideas.json")
+
+
+def test_init_records_etag_from_download_response_not_get_properties(sample_payload, monkeypatch):
+    """Anti-race: stored ETag must come from the download response, never from a
+    separate get_blob_properties() call, so the stored ETag and the cached content
+    always describe the same blob version."""
+    from src.ideas_cache import IdeasCache
+
+    fake_blob = MagicMock()
+    fake_blob.download_blob.return_value.readall.return_value = json.dumps(sample_payload).encode()
+    # Simulate the race window: download returns version A, but a separate
+    # get_blob_properties() call would return a newer version B.
+    fake_blob.download_blob.return_value.properties.etag = '"version-A"'
+    fake_blob.get_blob_properties.return_value.etag = '"version-B"'
+    monkeypatch.setattr("src.ideas_cache._make_blob_client", MagicMock(return_value=fake_blob))
+
+    cache = IdeasCache(blob_account="acct", blob_container="c", blob_name="ideas.json")
+    assert cache._blob_etag == '"version-A"', \
+        "stored ETag must reflect the downloaded version, not a separately-queried one"
 
 
 def test_cache_falls_back_to_file_when_blob_fails(sample_json, sample_payload, monkeypatch):
@@ -191,21 +212,25 @@ def test_reload_swaps_when_etag_changes(sample_payload, monkeypatch):
 
     fake_blob = MagicMock()
     fake_blob.download_blob.return_value.readall.return_value = json.dumps(sample_payload).encode()
+    fake_blob.download_blob.return_value.properties.etag = '"etag-1"'
     fake_blob.get_blob_properties.return_value.etag = '"etag-1"'
     monkeypatch.setattr("src.ideas_cache._make_blob_client", MagicMock(return_value=fake_blob))
 
     cache = IdeasCache(blob_account="acct", blob_container="c", blob_name="ideas.json")
     assert cache.total_count == 1
+    assert cache._blob_etag == '"etag-1"'
 
     new_payload = dict(sample_payload, total_posts=2, posts=sample_payload["posts"] * 2)
     new_payload["posts"][1] = dict(sample_payload["posts"][0], id=43)
     fake_blob.download_blob.return_value.readall.return_value = json.dumps(new_payload).encode()
+    fake_blob.download_blob.return_value.properties.etag = '"etag-2"'
     fake_blob.get_blob_properties.return_value.etag = '"etag-2"'
 
     swapped = cache.reload_from_blob_if_changed()
     assert swapped is True
     assert cache.total_count == 2
     assert cache.get_by_id(43) is not None
+    assert cache._blob_etag == '"etag-2"'
 
 
 def test_reload_noop_when_etag_unchanged(sample_payload, monkeypatch):
@@ -213,6 +238,7 @@ def test_reload_noop_when_etag_unchanged(sample_payload, monkeypatch):
 
     fake_blob = MagicMock()
     fake_blob.download_blob.return_value.readall.return_value = json.dumps(sample_payload).encode()
+    fake_blob.download_blob.return_value.properties.etag = '"etag-1"'
     fake_blob.get_blob_properties.return_value.etag = '"etag-1"'
     monkeypatch.setattr("src.ideas_cache._make_blob_client", MagicMock(return_value=fake_blob))
 
@@ -221,7 +247,7 @@ def test_reload_noop_when_etag_unchanged(sample_payload, monkeypatch):
 
     swapped = cache.reload_from_blob_if_changed()
     assert swapped is False
-    # ETag check used get_blob_properties; download should NOT have been called again.
+    # ETag pre-check used get_blob_properties; download should NOT have been called again.
     assert fake_blob.download_blob.call_count == download_calls_before
 
 
@@ -230,6 +256,7 @@ def test_reload_keeps_cache_on_failure(sample_payload, monkeypatch):
 
     fake_blob = MagicMock()
     fake_blob.download_blob.return_value.readall.return_value = json.dumps(sample_payload).encode()
+    fake_blob.download_blob.return_value.properties.etag = '"etag-1"'
     fake_blob.get_blob_properties.return_value.etag = '"etag-1"'
     monkeypatch.setattr("src.ideas_cache._make_blob_client", MagicMock(return_value=fake_blob))
 

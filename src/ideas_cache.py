@@ -77,9 +77,10 @@ class IdeasCache:
     def _try_load_from_blob(self) -> bool:
         try:
             client = _make_blob_client(self._blob_account, self._blob_container, self._blob_name)
-            data_bytes = client.download_blob().readall()
+            response = client.download_blob()
+            data_bytes = response.readall()
+            etag = response.properties.etag
             data = json.loads(data_bytes)
-            etag = client.get_blob_properties().etag
             with self._lock:
                 self._ingest(data)
                 self._blob_etag = etag
@@ -98,16 +99,25 @@ class IdeasCache:
             return False
 
     def reload_from_blob_if_changed(self) -> bool:
-        """Check the blob ETag; if it changed, download and swap. Returns True if swapped."""
+        """Check the blob ETag; if it changed, download and swap. Returns True if swapped.
+
+        Pre-check uses get_blob_properties() as a cheap "did anything change" signal.
+        After downloading, we record the ETag from the download response itself, not
+        the pre-check, so the stored ETag and the cached content always describe the
+        same version even if the blob is overwritten between pre-check and download.
+        """
         if not self._blob_configured():
             return False
         try:
             client = _make_blob_client(self._blob_account, self._blob_container, self._blob_name)
-            etag = client.get_blob_properties().etag
-            if etag == self._blob_etag:
-                print(f"[ideas-cache] Blob ETag unchanged ({etag}); no reload", file=sys.stderr)
+            precheck_etag = client.get_blob_properties().etag
+            if precheck_etag == self._blob_etag:
+                print(f"[ideas-cache] Blob ETag unchanged ({precheck_etag}); no reload", file=sys.stderr)
                 return False
-            data = json.loads(client.download_blob().readall())
+            response = client.download_blob()
+            data_bytes = response.readall()
+            new_etag = response.properties.etag
+            data = json.loads(data_bytes)
 
             new_posts = data.get("posts", [])
             new_by_id = {p["id"]: p for p in new_posts}
@@ -118,10 +128,10 @@ class IdeasCache:
                 self.exported_at = data.get("exported_at", "")
                 self.total_count = data.get("total_posts", 0)
                 self.archived_count = data.get("archived_posts", 0)
-                self._blob_etag = etag
+                self._blob_etag = new_etag
             print(
                 f"[ideas-cache] Reloaded {self.total_count} posts from blob "
-                f"(new etag={etag})",
+                f"(new etag={new_etag})",
                 file=sys.stderr,
             )
             return True
