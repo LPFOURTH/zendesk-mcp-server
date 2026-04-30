@@ -72,6 +72,33 @@ else
 fi
 
 echo ""
+echo "=== Assigning system-assigned managed identity ==="
+JOB_PRINCIPAL_ID=$(az containerapp job identity assign \
+  --name "$JOB_NAME" \
+  --resource-group "$RESOURCE_GROUP" \
+  --system-assigned \
+  --query "principalId" -o tsv)
+echo "Job principalId: $JOB_PRINCIPAL_ID"
+
+STORAGE_ACCOUNT="${IDEAS_STORAGE_ACCOUNT:-fourthzendeskideas}"
+STORAGE_CONTAINER="${IDEAS_STORAGE_CONTAINER:-ideas-data}"
+
+echo ""
+echo "=== Granting Storage Blob Data Contributor on $STORAGE_ACCOUNT/$STORAGE_CONTAINER ==="
+STORAGE_ID=$(az storage account show \
+  --name "$STORAGE_ACCOUNT" \
+  --resource-group "$RESOURCE_GROUP" \
+  --query id -o tsv)
+
+az role assignment create \
+  --assignee-object-id "$JOB_PRINCIPAL_ID" \
+  --assignee-principal-type ServicePrincipal \
+  --role "Storage Blob Data Contributor" \
+  --scope "${STORAGE_ID}/blobServices/default/containers/${STORAGE_CONTAINER}" \
+  --output table 2>&1 | tee /tmp/refresh-job-grant.log || \
+  grep -q "RoleAssignmentExists" /tmp/refresh-job-grant.log
+
+echo ""
 echo "=== Setup Complete ==="
 echo "Job name:     $JOB_NAME"
 echo "Schedule:     Every Monday at 6am UTC"
