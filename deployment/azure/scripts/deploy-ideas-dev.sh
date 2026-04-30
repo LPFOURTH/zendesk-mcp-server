@@ -18,9 +18,11 @@ ZENDESK_SUBDOMAIN="${ZENDESK_SUBDOMAIN:-hotschedules}"
 ZENDESK_EMAIL="${ZENDESK_EMAIL:-}"
 ZENDESK_API_TOKEN="${ZENDESK_API_TOKEN:-}"
 
-# Ideas cache — for now, use local file baked into container
-# Later: Azure Blob Storage
+# Ideas cache: bundled file is the fallback; blob is the live source.
 IDEAS_CACHE_FILE="${IDEAS_CACHE_FILE:-/app/ideas_latest.json}"
+IDEAS_BLOB_ACCOUNT="${IDEAS_BLOB_ACCOUNT:-fourthzendeskideas}"
+IDEAS_BLOB_CONTAINER="${IDEAS_BLOB_CONTAINER:-ideas-data}"
+IDEAS_BLOB_NAME="${IDEAS_BLOB_NAME:-ideas_latest.json}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
@@ -59,12 +61,18 @@ if az containerapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" &>
     --set-env-vars \
       "DEPLOY_TIME=$(date +%s)" \
       "DEPLOY_TAG=$IMAGE_TAG" \
+      "IDEAS_BLOB_ACCOUNT=$IDEAS_BLOB_ACCOUNT" \
+      "IDEAS_BLOB_CONTAINER=$IDEAS_BLOB_CONTAINER" \
+      "IDEAS_BLOB_NAME=$IDEAS_BLOB_NAME" \
     --output table
 else
   echo "Container App does not exist. Creating..."
 
   ENV_VARS="MCP_TRANSPORT=http MCP_HTTP_PORT=8000 MCP_HTTP_HOST=0.0.0.0"
   ENV_VARS="$ENV_VARS IDEAS_CACHE_FILE=$IDEAS_CACHE_FILE"
+  ENV_VARS="$ENV_VARS IDEAS_BLOB_ACCOUNT=$IDEAS_BLOB_ACCOUNT"
+  ENV_VARS="$ENV_VARS IDEAS_BLOB_CONTAINER=$IDEAS_BLOB_CONTAINER"
+  ENV_VARS="$ENV_VARS IDEAS_BLOB_NAME=$IDEAS_BLOB_NAME"
 
   if [ -n "$ZENDESK_SUBDOMAIN" ]; then
     ENV_VARS="$ENV_VARS ZENDESK_SUBDOMAIN=$ZENDESK_SUBDOMAIN"
@@ -110,6 +118,30 @@ az containerapp ingress sticky-sessions set \
   --resource-group "$RESOURCE_GROUP" \
   --affinity sticky \
   --output table 2>/dev/null || echo "(sticky sessions may already be set)"
+
+echo ""
+echo "=== Assigning system-assigned managed identity ==="
+APP_PRINCIPAL_ID=$(az containerapp identity assign \
+  --name "$APP_NAME" \
+  --resource-group "$RESOURCE_GROUP" \
+  --system-assigned \
+  --query "principalId" -o tsv)
+echo "App principalId: $APP_PRINCIPAL_ID"
+
+echo ""
+echo "=== Granting Storage Blob Data Reader on $IDEAS_BLOB_ACCOUNT/$IDEAS_BLOB_CONTAINER ==="
+STORAGE_ID=$(az storage account show \
+  --name "$IDEAS_BLOB_ACCOUNT" \
+  --resource-group "$RESOURCE_GROUP" \
+  --query id -o tsv)
+
+az role assignment create \
+  --assignee-object-id "$APP_PRINCIPAL_ID" \
+  --assignee-principal-type ServicePrincipal \
+  --role "Storage Blob Data Reader" \
+  --scope "${STORAGE_ID}/blobServices/default/containers/${IDEAS_BLOB_CONTAINER}" \
+  --output table 2>&1 | tee /tmp/ideas-dev-grant.log || \
+  grep -q "RoleAssignmentExists" /tmp/ideas-dev-grant.log
 
 echo ""
 echo "=== Ideas Dev Deployment Complete ==="
