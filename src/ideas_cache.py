@@ -6,6 +6,9 @@ import json
 import os
 import re
 import sys
+import threading
+import time
+from datetime import datetime, time as dtime, timedelta, timezone
 from html import unescape
 
 
@@ -13,8 +16,28 @@ def _strip_html(text: str) -> str:
     return unescape(re.sub(r"<[^>]+>", " ", text))
 
 
+def _make_blob_client(account: str, container: str, name: str):
+    """Indirection so tests can monkeypatch this."""
+    from azure.identity import DefaultAzureCredential
+    from azure.storage.blob import BlobClient
+
+    credential = DefaultAzureCredential()
+    return BlobClient(
+        account_url=f"https://{account}.blob.core.windows.net",
+        container_name=container,
+        blob_name=name,
+        credential=credential,
+    )
+
+
 class IdeasCache:
-    def __init__(self, local_file: str | None = None):
+    def __init__(
+        self,
+        local_file: str | None = None,
+        blob_account: str | None = None,
+        blob_container: str | None = None,
+        blob_name: str | None = None,
+    ):
         self.posts: list[dict] = []
         self.posts_by_id: dict[int, dict] = {}
         self.exported_at: str = ""
@@ -22,9 +45,47 @@ class IdeasCache:
         self.archived_count: int = 0
         self._loaded = False
 
+        self._blob_account = blob_account or os.environ.get("IDEAS_BLOB_ACCOUNT")
+        self._blob_container = blob_container or os.environ.get("IDEAS_BLOB_CONTAINER")
+        self._blob_name = blob_name or os.environ.get("IDEAS_BLOB_NAME", "ideas_latest.json")
+        self._blob_etag: str | None = None
+        self._lock = threading.Lock()
+        self._reload_thread: threading.Thread | None = None
+
         file_path = local_file or os.environ.get("IDEAS_CACHE_FILE")
-        if file_path:
+
+        if self._blob_configured():
+            ok = self._try_load_from_blob()
+            if not ok and file_path:
+                self._load_from_file(file_path)
+        elif file_path:
             self._load_from_file(file_path)
+
+    def _blob_configured(self) -> bool:
+        return bool(self._blob_account and self._blob_container and self._blob_name)
+
+    def _try_load_from_blob(self) -> bool:
+        try:
+            client = _make_blob_client(self._blob_account, self._blob_container, self._blob_name)
+            data_bytes = client.download_blob().readall()
+            data = json.loads(data_bytes)
+            etag = client.get_blob_properties().etag
+            with self._lock:
+                self._ingest(data)
+                self._blob_etag = etag
+            print(
+                f"[ideas-cache] Loaded {self.total_count} posts from blob "
+                f"{self._blob_account}/{self._blob_container}/{self._blob_name} (etag={etag})",
+                file=sys.stderr,
+            )
+            return True
+        except Exception as exc:
+            print(
+                f"[ideas-cache] Blob load failed ({type(exc).__name__}: {exc}); "
+                f"will use fallback if available",
+                file=sys.stderr,
+            )
+            return False
 
     def _load_from_file(self, path: str) -> None:
         try:

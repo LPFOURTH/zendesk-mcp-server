@@ -127,3 +127,57 @@ def test_cache_pagination(sample_json):
     result2 = cache.list_ideas(per_page=1, page=2)
     assert len(result2["posts"]) == 1
     assert result2["posts"][0]["id"] == 2
+
+
+from unittest.mock import MagicMock
+
+
+@pytest.fixture
+def sample_payload():
+    return {
+        "exported_at": "2026-04-30T11:00:00Z",
+        "total_posts": 1,
+        "archived_posts": 0,
+        "posts": [
+            {
+                "id": 42, "title": "Loaded from blob", "details": "blob test",
+                "status": "open", "topic": "Ideas: WFM",
+                "author": "BlobBot", "organization": "Test",
+                "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
+                "tags": [], "vote_count": 1, "vote_sum": 1,
+                "follower_count": 0, "comment_count": 0,
+                "comments": [],
+                "html_url": "https://ex.com/42", "is_archived": False,
+            }
+        ],
+    }
+
+
+def test_cache_loads_from_blob_when_configured(sample_payload, monkeypatch):
+    from src.ideas_cache import IdeasCache
+
+    fake_blob = MagicMock()
+    fake_blob.download_blob.return_value.readall.return_value = json.dumps(sample_payload).encode()
+    fake_blob.get_blob_properties.return_value.etag = '"etag-1"'
+
+    fake_factory = MagicMock(return_value=fake_blob)
+    monkeypatch.setattr("src.ideas_cache._make_blob_client", fake_factory)
+
+    cache = IdeasCache(blob_account="acct", blob_container="c", blob_name="ideas.json", local_file=None)
+    assert cache.total_count == 1
+    assert cache.exported_at == "2026-04-30T11:00:00Z"
+    assert cache.get_by_id(42)["title"] == "Loaded from blob"
+    fake_factory.assert_called_once_with("acct", "c", "ideas.json")
+
+
+def test_cache_falls_back_to_file_when_blob_fails(sample_json, sample_payload, monkeypatch):
+    from src.ideas_cache import IdeasCache
+
+    fake_blob = MagicMock()
+    fake_blob.download_blob.side_effect = RuntimeError("blob unreachable")
+    monkeypatch.setattr("src.ideas_cache._make_blob_client", MagicMock(return_value=fake_blob))
+
+    cache = IdeasCache(blob_account="acct", blob_container="c", blob_name="ideas.json", local_file=sample_json)
+    # sample_json has 3 posts; blob payload would have had 1
+    assert cache.total_count == 3
+    assert cache.get_by_id(1)["title"] == "Top voted idea"
