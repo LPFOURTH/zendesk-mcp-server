@@ -67,11 +67,24 @@ def _run_http() -> None:
             async with dev_app.router.lifespan_context(app):
                 yield
 
+    routes = [
+        Route("/", health, methods=["GET"]),
+        Route("/health", health, methods=["GET"]),
+    ]
+
+    # Architecture E (Path B) — Zendesk JWT SSO Remote Login URL.
+    # Enabled when ZENDESK_JWT_SSO_SECRET + ENTRA_CLIENT_ID/TENANT_ID +
+    # ZENDESK_PROD_SUBDOMAIN are set (typically via Key Vault refs in deploy).
+    # When disabled, the route just isn't registered — Zendesk falls back to
+    # its own login form. See spec
+    # docs/superpowers/specs/2026-05-07-zendesk-jwt-sso-remote-login-design.md
+    from .zendesk_sso_route import make_zendesk_sso_route_from_env
+    zendesk_sso_handler = make_zendesk_sso_route_from_env()
+    if zendesk_sso_handler is not None:
+        routes.append(Route("/zendesk-sso", zendesk_sso_handler, methods=["GET", "POST"]))
+
     parent = Starlette(
-        routes=[
-            Route("/", health, methods=["GET"]),
-            Route("/health", health, methods=["GET"]),
-        ],
+        routes=routes,
         lifespan=combined_lifespan,
     )
 
@@ -80,6 +93,8 @@ def _run_http() -> None:
     print(f"[zendesk-mcp] HTTP server listening on {host}:{port}", file=sys.stderr)
     print(f"[zendesk-mcp] /mcp/prod  (no auth, service account)", file=sys.stderr)
     print(f"[zendesk-mcp] /mcp/dev   (Zendesk OAuth via OAuthProxy)", file=sys.stderr)
+    if zendesk_sso_handler is not None:
+        print(f"[zendesk-mcp] /zendesk-sso (Zendesk JWT SSO via Entra)", file=sys.stderr)
     print(f"[zendesk-mcp] Health check: http://{host}:{port}/health", file=sys.stderr)
 
     uvicorn.run(app, host=host, port=port, log_level="warning")
