@@ -18,6 +18,12 @@ ZENDESK_SUBDOMAIN="${ZENDESK_SUBDOMAIN:-}"
 ZENDESK_EMAIL="${ZENDESK_EMAIL:-}"
 ZENDESK_API_TOKEN="${ZENDESK_API_TOKEN:-}"
 
+# Architecture E (Path B) — Zendesk JWT SSO Remote Login URL.
+# Defaults align with the existing Entra app registration documented in CLAUDE.md.
+# Override via env if rotating Entra app or moving to a new tenant.
+ENTRA_CLIENT_ID="${ENTRA_CLIENT_ID:-79da6be7-9ea8-4e39-8edc-6863da932f2b}"
+ENTRA_TENANT_ID="${ENTRA_TENANT_ID:-75cd3b18-d23a-40ee-ad06-ad4484fc72fe}"
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
@@ -60,6 +66,15 @@ if az containerapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" &>
     "zendesk-prod-oauth-client-id=keyvaultref:https://${KV_NAME}.vault.azure.net/secrets/zendesk-prod-oauth-client-id,identityref:system"
     "zendesk-prod-oauth-secret=keyvaultref:https://${KV_NAME}.vault.azure.net/secrets/zendesk-prod-oauth-secret,identityref:system"
   )
+  # Architecture E — Zendesk JWT SSO shared secret. Optional; only bound if KV
+  # has the corresponding secret (Stefan provides + we put in KV). If absent,
+  # /zendesk-sso route stays disabled at runtime (graceful degradation).
+  if az keyvault secret show --vault-name "$KV_NAME" --name mcp-zendesk-jwt-sso-secret &>/dev/null; then
+    SECRETS+=("zendesk-jwt-sso-secret=keyvaultref:https://${KV_NAME}.vault.azure.net/secrets/mcp-zendesk-jwt-sso-secret,identityref:system")
+    echo "  (Architecture E: zendesk-jwt-sso-secret will be bound)"
+  else
+    echo "  (Architecture E: mcp-zendesk-jwt-sso-secret not yet in KV — /zendesk-sso route will stay disabled)"
+  fi
   for binding in "${SECRETS[@]}"; do
     name="${binding%%=*}"
     echo "  -> $name"
@@ -69,22 +84,31 @@ if az containerapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" &>
       --secrets "$binding" \
       --output none
   done
-  echo "  (all 5 secrets re-bound)"
+  echo "  (${#SECRETS[@]} secrets re-bound)"
+
+  # Build the env-var arg list. Architecture E vars are conditionally appended.
+  declare -a ENV_ARGS=(
+    "DEPLOY_TIME=$(date +%s)"
+    "DEPLOY_TAG=$IMAGE_TAG"
+    "MCP_JWT_SIGNING_KEY=secretref:jwt-signing-key"
+    "MCP_STORAGE_ENCRYPTION_KEY=secretref:storage-encryption-key"
+    "COSMOS_ENDPOINT=secretref:cosmos-endpoint"
+    "MCP_DEV_ENVIRONMENT=PROD"
+    "ZENDESK_PROD_SUBDOMAIN=hotschedules"
+    "ZENDESK_PROD_OAUTH_CLIENT_ID=secretref:zendesk-prod-oauth-client-id"
+    "ZENDESK_PROD_OAUTH_SECRET=secretref:zendesk-prod-oauth-secret"
+    "ENTRA_CLIENT_ID=$ENTRA_CLIENT_ID"
+    "ENTRA_TENANT_ID=$ENTRA_TENANT_ID"
+  )
+  if az keyvault secret show --vault-name "$KV_NAME" --name mcp-zendesk-jwt-sso-secret &>/dev/null; then
+    ENV_ARGS+=("ZENDESK_JWT_SSO_SECRET=secretref:zendesk-jwt-sso-secret")
+  fi
 
   az containerapp update \
     --name "$APP_NAME" \
     --resource-group "$RESOURCE_GROUP" \
     --image "$ACR_LOGIN_SERVER/$APP_NAME:$IMAGE_TAG" \
-    --set-env-vars \
-      "DEPLOY_TIME=$(date +%s)" \
-      "DEPLOY_TAG=$IMAGE_TAG" \
-      "MCP_JWT_SIGNING_KEY=secretref:jwt-signing-key" \
-      "MCP_STORAGE_ENCRYPTION_KEY=secretref:storage-encryption-key" \
-      "COSMOS_ENDPOINT=secretref:cosmos-endpoint" \
-      "MCP_DEV_ENVIRONMENT=PROD" \
-      "ZENDESK_PROD_SUBDOMAIN=hotschedules" \
-      "ZENDESK_PROD_OAUTH_CLIENT_ID=secretref:zendesk-prod-oauth-client-id" \
-      "ZENDESK_PROD_OAUTH_SECRET=secretref:zendesk-prod-oauth-secret" \
+    --set-env-vars "${ENV_ARGS[@]}" \
     --output table
 else
   echo "Container App does not exist. Creating..."
