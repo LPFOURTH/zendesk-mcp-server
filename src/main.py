@@ -55,7 +55,11 @@ def _run_http() -> None:
     dev_server = create_dev_server()
 
     prod_app = prod_server.http_app(path="/mcp")
-    dev_app = dev_server.http_app(path="/mcp")
+    # stateless_http=True on dev: works around Copilot Studio's MCP-connector
+    # double-click consent bug. With state held client-side per request, the
+    # consent flow doesn't depend on a session that gets recycled between
+    # the first and second click. See Simon Doy 2025-11-18 + ADR (TODO).
+    dev_app = dev_server.http_app(path="/mcp", stateless_http=True)
 
     @asynccontextmanager
     async def combined_lifespan(app):
