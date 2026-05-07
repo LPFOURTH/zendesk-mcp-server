@@ -10,7 +10,7 @@ RESOURCE_GROUP="fourth-ai-prod"
 ACR_NAME="fourthzendeskmcp"
 ENVIRONMENT_NAME="fourth-ai-env"
 APP_NAME="fourth-zendesk-mcp-server"
-KV_NAME="${KV_NAME:-fourth-mcp-kv}"
+KV_NAME="${KV_NAME:-mcp-kv-ai-enablement}"
 IMAGE_TAG="${1:-latest}"
 
 # Zendesk credentials (pass as args or set before running)
@@ -43,18 +43,33 @@ if az containerapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" &>
   # Idempotent — runs every deploy. Requires that 4-provision-oauth-storage.sh
   # has been run at least once and that the system-assigned MI has
   # Key Vault Secrets User on $KV_NAME.
+  #
+  # Each secret is bound in its own `secret set` call. This is intentional:
+  # binding all 5 in a single call can hit a Container Apps preflight-validator
+  # cache-staleness bug (observed 2026-05-07 after the 2026-04-29 RG move) where
+  # the validator returns "Unable to fetch secret using Managed identity 'system'"
+  # for all 5 secrets even though the MI has the right role and the runtime
+  # resolves them fine. Binding one at a time forces the validator through a
+  # non-cached code path. Adds ~10s of wall time but is reliably idempotent.
   echo ""
-  echo "=== Binding Key Vault secrets ==="
-  az containerapp secret set \
-    --name "$APP_NAME" \
-    --resource-group "$RESOURCE_GROUP" \
-    --secrets \
-      "jwt-signing-key=keyvaultref:https://${KV_NAME}.vault.azure.net/secrets/mcp-jwt-signing-key,identityref:system" \
-      "storage-encryption-key=keyvaultref:https://${KV_NAME}.vault.azure.net/secrets/mcp-storage-encryption-key,identityref:system" \
-      "cosmos-endpoint=keyvaultref:https://${KV_NAME}.vault.azure.net/secrets/cosmos-endpoint,identityref:system" \
-      "zendesk-prod-oauth-client-id=keyvaultref:https://${KV_NAME}.vault.azure.net/secrets/zendesk-prod-oauth-client-id,identityref:system" \
-      "zendesk-prod-oauth-secret=keyvaultref:https://${KV_NAME}.vault.azure.net/secrets/zendesk-prod-oauth-secret,identityref:system" \
-    --output table
+  echo "=== Binding Key Vault secrets (one at a time — see comment in script) ==="
+  declare -a SECRETS=(
+    "jwt-signing-key=keyvaultref:https://${KV_NAME}.vault.azure.net/secrets/mcp-jwt-signing-key,identityref:system"
+    "storage-encryption-key=keyvaultref:https://${KV_NAME}.vault.azure.net/secrets/mcp-storage-encryption-key,identityref:system"
+    "cosmos-endpoint=keyvaultref:https://${KV_NAME}.vault.azure.net/secrets/cosmos-endpoint,identityref:system"
+    "zendesk-prod-oauth-client-id=keyvaultref:https://${KV_NAME}.vault.azure.net/secrets/zendesk-prod-oauth-client-id,identityref:system"
+    "zendesk-prod-oauth-secret=keyvaultref:https://${KV_NAME}.vault.azure.net/secrets/zendesk-prod-oauth-secret,identityref:system"
+  )
+  for binding in "${SECRETS[@]}"; do
+    name="${binding%%=*}"
+    echo "  -> $name"
+    az containerapp secret set \
+      --name "$APP_NAME" \
+      --resource-group "$RESOURCE_GROUP" \
+      --secrets "$binding" \
+      --output none
+  done
+  echo "  (all 5 secrets re-bound)"
 
   az containerapp update \
     --name "$APP_NAME" \
