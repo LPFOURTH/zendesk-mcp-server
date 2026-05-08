@@ -290,6 +290,55 @@ class ZendeskClient:
             "PUT", f"/tickets/{ticket_id}.json", data={"ticket": data}
         )
 
+    async def upload_file(
+        self, content: bytes, filename: str, content_type: str
+    ) -> str:
+        """Upload a file attachment and return the upload token (valid for 60 minutes).
+
+        The token is then included in comment.uploads when creating a ticket.
+        """
+        url = f"{self.get_base_url()}/uploads.json"
+        params = {"filename": filename}
+        headers = {
+            "Authorization": self._get_auth_header(),
+            "Content-Type": content_type,
+        }
+
+        self._rate_limiter.acquire()
+
+        try:
+            response = await self._http.request(
+                "POST",
+                url,
+                params=params,
+                content=content,
+                headers=headers,
+            )
+            response.raise_for_status()
+            data = response.json()
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            try:
+                body = exc.response.json()
+            except ValueError:
+                body = {"error": exc.response.text}
+            print(
+                f"[zendesk-client] API error: {status} on POST /uploads.json - "
+                f"body: {body}",
+                file=sys.stderr,
+            )
+            error_type = body.get("error", "Upload failed")
+            description = body.get("description", "")
+            raise RuntimeError(
+                f"Zendesk API Error: {status} - {error_type}. {description}"
+            ) from exc
+        except httpx.TimeoutException as exc:
+            raise RuntimeError("Zendesk upload request timed out after 30s") from exc
+        except httpx.RequestError as exc:
+            raise RuntimeError(f"Zendesk connection error: {exc}") from exc
+
+        return data["upload"]["token"]
+
     # -- Help Center --
     async def list_articles(self, params: dict | None = None) -> dict:
         """List Help Center articles, optionally filtered by query params."""

@@ -76,10 +76,24 @@ For all L3 and L4 fields, use the exact option values listed in the `create_it_t
 ---
 
 Ask: "Does this look correct, or would you like to change anything before I submit?"
+If the user wants to CC additional people, ask: "Would you like to CC anyone else on this ticket?"
 
 ## Step 5 — Submit
 
 Once confirmed, call `create_it_ticket` with the mapped values. Do NOT pass both `incident_category` and `sr_category`. Do NOT pass L3 fields from the wrong classification branch.
 
+- If the user provided CC email addresses, pass them as `cc_emails: ["email1@example.com", ...]`
+- If the user provided file attachments, pass them via `attachments`
+
 After the tool responds:
 "Your ticket has been created successfully. Your reference number is **#[ticket_id]**. The IT team will be in touch shortly."
+
+## CC and Attachments
+
+**CC emails** — If the user mentions that colleagues should be copied on the ticket, collect their email addresses and pass them as `cc_emails`. Example: `cc_emails: ["jane.smith@company.com", "it-manager@company.com"]`
+
+**Attachments** — If the user wants to attach a file (screenshot, log file, document):
+- Ask them to provide either a file URL or base64-encoded file content
+- Pass via `attachments` parameter as a list of objects:
+  - URL form: `{"url": "https://...", "filename": "screenshot.png"}`
+  - Base64 form: `{"content_base64": "...", "filename": "error.png", "content_type": "image/png"}`

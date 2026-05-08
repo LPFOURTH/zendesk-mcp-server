@@ -201,22 +201,80 @@ ALL_TOOLS: list[dict[str, Any]] = [
                 "type": "string",
                 "required": False,
                 "enum": [
+                    # dev
                     "bizapps",
                     "eit_software",
                     "eit_hardware",
                     "eit_general",
                     "eit_security_ops",
+                    # prod
+                    "software",
+                    "hardware",
+                    "email_collaboration",
+                    "network",
+                    "access_management",
+                    "security",
+                    "facilities_office",
+                    "other",
                 ],
             },
             "sr_category": {
                 "type": "string",
                 "required": False,
                 "enum": [
+                    # dev
                     "bizapps",
                     "eit_software",
                     "eit_hardware",
                     "eit_general",
                     "eit_security_ops",
+                    # prod
+                    "software",
+                    "application_access_request",
+                    "create_distribution_group",
+                    "desk_office_move",
+                    "dev_access",
+                    "email_trace",
+                    "file_restores",
+                    "fileshares",
+                    "gdpr_request",
+                    "lad_maintenance",
+                    "leaver_request",
+                    "new_software_request",
+                    "new_starter",
+                    "unblock_website",
+                    "update_distribution_group",
+                    "other",
+                ],
+            },
+            "incident_email_collab_item": {
+                "type": "string",
+                "required": False,
+                "description": "Prod only. For incident + email_collaboration category.",
+                "enum": ["confluence", "outlook", "sharepoint", "slack", "teams"],
+            },
+            "incident_network_item": {
+                "type": "string",
+                "required": False,
+                "description": "Prod only. For incident + network category.",
+                "enum": ["internet", "vpn", "wifi", "slow_connection"],
+            },
+            "incident_access_mgmt_item": {
+                "type": "string",
+                "required": False,
+                "description": "Prod only. For incident + access_management category.",
+                "enum": ["account_lockout", "mfa", "password_reset"],
+            },
+            "incident_facilities_item": {
+                "type": "string",
+                "required": False,
+                "description": "Prod only. For incident + facilities_office category.",
+                "enum": [
+                    "door_access",
+                    "meeting_rooms",
+                    "display_tvs",
+                    "printer",
+                    "video_conferencing",
                 ],
             },
             "impact": {
@@ -499,8 +557,7 @@ ALL_TOOLS: list[dict[str, Any]] = [
             "markdown_content": {
                 "type": "string",
                 "description": (
-                    'Markdown content with "### Functionality N Name"'
-                    ' and "### Functionality N Description" sections'
+                    'Markdown content with "### Functionality N Name"' ' and "### Functionality N Description" sections'
                 ),
                 "required": True,
             },
@@ -519,9 +576,7 @@ def create_server() -> FastMCP:
     """Build and return the FastMCP server with enabled tools registered."""
     config = _load_tools_config()
 
-    env_disabled = {
-        t.strip() for t in os.environ.get("DISABLED_TOOLS", "").split(",") if t.strip()
-    }
+    env_disabled = {t.strip() for t in os.environ.get("DISABLED_TOOLS", "").split(",") if t.strip()}
     all_disabled = config["disabled"] | env_disabled
 
     enabled_tools = []
@@ -547,8 +602,7 @@ def create_server() -> FastMCP:
     mcp = FastMCP(
         "Zendesk API",
         instructions=(
-            "MCP Server for Zendesk API - Tickets & Articles "
-            "(read/create/update only, no delete operations)"
+            "MCP Server for Zendesk API - Tickets & Articles " "(read/create/update only, no delete operations)"
         ),
         host=os.environ.get("MCP_HTTP_HOST", "0.0.0.0"),
         port=int(os.environ.get("MCP_HTTP_PORT", "8000")),

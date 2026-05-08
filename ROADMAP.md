@@ -12,6 +12,7 @@ _No completed items yet._
 _No planned items yet._
 
 ## Recent Planning Sessions
+### 2026-05-05: Planning Session
 ### 2026-04-22: `create_it_ticket` — IT Support Request Form-Aware Tool
 **Key Decisions:**
 - Builds the correct `custom_fields` array and sets `ticket_form_id`
@@ -19,7 +20,3 @@ _No planned items yet._
 - `src/tools/tickets.py`: — Add `create_it_ticket` with `Literal` params using friendly names; internal mapping via constants
 - `src/server.py`: — Add entry in `ALL_TOOLS`
 - `docs/it-form-update-guide.md`: — Commands + full update procedure when the form changes
-
-**Files:** src/constants.py, src/tools/tickets.py, src/server.py, tools.config.json
-
-**Verification:** Start server in stdio mode: `python -m src.main`

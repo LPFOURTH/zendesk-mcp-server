@@ -125,6 +125,7 @@ ENVIRONMENTS = {
 IT_FORM_CONFIG: dict[str, dict] = {
     "dev": {
         "form_id": 40492655042957,
+        "brand_id": 40387882303501,
         "fields": {
             "classification": 40492783035149,
             "sr_category": 44259226554637,
@@ -150,8 +151,44 @@ IT_FORM_CONFIG: dict[str, dict] = {
         },
     },
     "prod": {
-        "form_id": 40703005823501,
-        "fields": None,  # TODO: fill after prod access — see docs/it-form-update-guide.md
+        "form_id": 45108529620365,
+        "brand_id": 360004744852,
+        "fields": {
+            # L1
+            "classification":             45106525447821,
+            # L2
+            "sr_category":                45106525487885,
+            "inc_category":               45106568824205,
+            # L3 — SR paths
+            "sr_software":                40703442821517,
+            "sr_bizapps":                 45106525699981,
+            "sr_hardware":                45106525737613,
+            "sr_security_ops":            45106558339981,
+            "eit_general_sr":             45106484057869,
+            # L4 — SR EIT General sub-fields
+            "access_request_type":        45106538379277,
+            "distribution_list_action":   45106587149837,
+            "fourth_office_type":         45106484253197,
+            "email_trace_type":           45106558500109,
+            "restore_data_type":          45106538522125,
+            "vm_type":                    45106538556813,
+            # L3 — Incident paths
+            "inc_software":               40703497886605,
+            "inc_hardware":               40703415945869,
+            "inc_bizapps":                40703501864845,
+            "inc_security":               40703481085709,
+            "inc_eit_general":            45491116221837,
+            # L4 — Incident EIT General sub-fields
+            "inc_eit_network":            45491169854733,
+            "inc_eit_access_mgmt":        45491149674765,
+            "inc_eit_email_collab":       45491127022349,
+            "inc_eit_facilities":         45491136489741,
+            "inc_eit_vm":                 45491101913485,
+            # Always-present
+            "impact":                     40684744263693,
+            "location":                   42604163385485,
+            "additional_location_info":   45106484442893,
+        },
     },
 }
 
@@ -414,4 +451,151 @@ IT_VM_VALUES = {
     "remote_desktop_denver": "vm_rds_denver",
     "windows_365_cloud_pc": "vm_win365_cloudpc",
     "other": "vm_other",
+}
+
+# --- Prod-specific maps (new prod form mirrors dev L2 taxonomy; only L3/L4 diverge) ---
+
+# Prod L3 for inc_category = bizapps (different "other" tag vs dev; no data_team option)
+IT_PROD_INC_BIZAPPS_VALUES = {
+    "zendesk":    "cl_inc_biz_app_zendesk",
+    "salesforce": "cl_inc_biz_app_salesforce",
+    "netsuite":   "cl_inc_biz_app_netsuite",
+    "jira":       "cl_inc_biz_app_jira",
+    "jitterbit":  "cl_inc_biz_app_jitterbit",
+    "docusign":   "cl_inc_biz_app_docusign",
+    "other":      "cl_inc_biz_app_other",
+}
+# Prod L3 for inc_category = security (different "other" tag vs dev)
+IT_PROD_INC_SECURITY_VALUES = {
+    "email_blocked":        "cl_inc_sec_email_blocked",
+    "password_compromised": "cl_inc_sec_password_compromised",
+    "phishing":             "cl_inc_sec_phished_or_phishing_attempt",
+    "other":                "cl_inc_sec_email_other",
+}
+# Prod L3 for inc_category = software (extends dev with new options; no "other")
+IT_PROD_INC_SOFTWARE_VALUES = {
+    **IT_INC_SOFTWARE_VALUES,
+    # New options on prod form
+    "adobe_acrobat_pro":    "cl_inc_soft_adobe_acrobat_pro",
+    "ai_tooling":           "cl_inc_soft_ai_tooling",
+    "ai_other":             "cl_inc_soft_ai_other",
+    "ai_claude":            "cl_inc_soft_ai_claude",
+    "ai_chatgpt":           "cl_inc_soft_ai_chatgpt",
+    "ai_copilot":           "cl_inc_soft_ai_copilot",
+    "ai_copilot_studio":    "cl_inc_soft_ai_copilot_studio",
+    "gotoassist":           "cl_inc_soft_gotoassist",
+    "visual_studio_code":   "cl_inc_soft_visual_studio_code",
+    "ms_outlook":           "cl_inc_soft_ms_outlook",
+    "ms_edge":              "cl_inc_soft_ms_edge",
+    "ms_todo":              "cl_inc_soft_ms_todo",
+    "google_chrome":        "cl_inc_soft_google_chrome",
+    "postman":              "cl_inc_soft_postman",
+    "zoom_contact_center":  "cl_inc_soft_zoom_contact_center",
+    "zoom_phone":           "cl_inc_soft_zoom_phone",
+    # prod-only additions from before (keep)
+    "power_bi":             "cl_inc_soft_power_bi",
+    "powerbi_desktop":      "cl_inc_soft_powerbi_desktop_app",
+}
+# Prod L3 for sr_category = bizapps (completely new tags on new prod form)
+IT_PROD_SR_BIZAPPS_VALUES = {
+    "zendesk":        "sr_bizz_zendesk",
+    "salesforce":     "sr_bizz_salesforce",
+    "netsuite":       "sr_bizz_netsuite",
+    "jira":           "sr_bizz_jira",
+    "jitterbit":      "sr_bizz_jitterbit",
+    "docusign":       "sr_bizz_docusign",
+    "data_team":      "sr_bizz_data_team",
+    "gdpr_request":   "sr_bizz_gdpr_request",
+    "other":          "sr_bizz_other_sr",
+}
+# Prod L3 for sr_category = software (filtered + extended from dev; new "other" tag)
+IT_PROD_SR_SOFTWARE_VALUES = {
+    k: v for k, v in IT_SR_SOFTWARE_VALUES.items()
+    if k not in {"admin_by_request", "concur", "managed_apple_id", "other"}
+}
+IT_PROD_SR_SOFTWARE_VALUES.update({
+    # New options on prod form
+    "adobe_acrobat_pro":    "cl_ser_req_adobe_acrobat_pro",
+    "ai_tooling":           "cl_ser_req_ai_tooling",
+    "ai_other":             "cl_ser_req_ai_other",
+    "ai_claude":            "cl_ser_req_ai_claude",
+    "ai_chatgpt":           "cl_ser_req_ai_chatgpt",
+    "ai_copilot":           "cl_ser_req_ai_copilot",
+    "ai_copilot_studio":    "cl_ser_req_ai_copilot_studio",
+    "developer_apple_id":   "cl_ser_req_developer_apple_id",
+    "gotoassist":           "cl_ser_req_gotoassist",
+    "ms_visual_studio":     "cl_ser_req_ms_visual_studio",
+    "visual_studio_code":   "cl_ser_req_visual_studio_code",
+    "ms_outlook":           "cl_ser_req_ms_outlook",
+    "ms_edge":              "cl_ser_req_ms_edge",
+    "ms_todo":              "cl_ser_req_ms_todo",
+    "google_chrome":        "cl_ser_req_google_chrome",
+    "postman":              "cl_ser_req_postman",
+    "zoom_contact_center":  "cl_ser_req_zoom_contact_center",
+    "zoom_phone":           "cl_ser_req_zoom_phone",
+    # prod-only additions from before (keep)
+    "power_bi":             "cl_ser_req_power_bi",
+    "powerbi_desktop":      "cl_ser_req_powerbi_desktop_app",
+    # changed "other" tag for prod
+    "other":                "cl_ser_req_sw_other",
+})
+
+# Prod: Incident EIT General parent field
+IT_PROD_INC_EIT_GENERAL_VALUES = {
+    "network":             "inc_eit_gen_network",
+    "access_management":   "inc_eit_gen_access_management",
+    "email_collaboration": "inc_eit_gen_email_collab",
+    "facilities":          "inc_eit_gen_facilities",
+    "virtual_machine":     "inc_eit_gen_virtual_machine",
+}
+
+# Prod: Incident EIT Network (L4)
+IT_PROD_INC_EIT_NETWORK_VALUES = {
+    "internet":         "inc_eit_net_internet_issues",
+    "vpn":              "inc_eit_net_vpn",
+    "wifi":             "inc_eit_net_office_wifi",
+    "slow_connection":  "inc_eit_net_slow_connection",
+    "other":            "inc_eit_net_other",
+}
+
+# Prod: Incident EIT Access Management (L4)
+IT_PROD_INC_EIT_ACCESS_MGMT_VALUES = {
+    "account_lockout": "inc_eit_am_account_lockout",
+    "mfa":             "inc_eit_am_mfa_issue",
+    "password_reset":  "inc_eit_am_password_reset",
+    "other":           "inc_eit_am_other",
+}
+
+# Prod: Incident EIT Email & Collaboration (L4)
+IT_PROD_INC_EIT_EMAIL_COLLAB_VALUES = {
+    "confluence": "inc_eit_ec_confluence",
+    "outlook":    "inc_eit_ec_outlook_email",
+    "sharepoint": "inc_eit_ec_sharepoint",
+    "slack":      "inc_eit_ec_slack",
+    "teams":      "inc_eit_ec_teams",
+    "other":      "inc_eit_ec_other",
+}
+
+# Prod: Incident EIT Facilities (L4)
+IT_PROD_INC_EIT_FACILITIES_VALUES = {
+    "door_access":        "inc_eit_fac_door_access",
+    "meeting_rooms":      "inc_eit_fac_meeting_rooms",
+    "office_tvs":         "inc_eit_fac_office_tvs",
+    "office_printer":     "inc_eit_fac_office_printer",
+    "video_conferencing": "inc_eit_fac_video_conferencing",
+    "office_badge":       "inc_eit_fac_office_badge",
+    "other":              "inc_eit_fac_other",
+}
+
+# Prod: Incident EIT Virtual Machine (L4)
+IT_PROD_INC_EIT_VM_VALUES = {
+    "remote_desktop_denver": "inc_eit_vm_rds_denver",
+    "windows_365_cloud_pc":  "inc_eit_vm_win365_cloudpc",
+    "other":                 "inc_eit_vm_other",
+}
+
+# Prod: Access Request (extends dev with mailbox option)
+IT_PROD_ACCESS_REQUEST_VALUES = {
+    **IT_ACCESS_REQUEST_VALUES,
+    "mailbox": "eit_gen_mailbox",
 }
