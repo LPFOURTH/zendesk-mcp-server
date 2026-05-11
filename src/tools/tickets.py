@@ -43,8 +43,13 @@ from ..constants import (
     IT_SR_SOFTWARE_VALUES,
     IT_VM_VALUES,
 )
+from ..attribution import (
+    apply_ticket_attribution,
+    get_current_entra_email,
+)
 from ..request_context import zendesk_environment_var
 from ..zendesk_client import zendesk_client
+from ..zendesk_user_resolver import resolve_zendesk_user_id
 
 
 def _get_authenticated_user_email() -> str | None:
@@ -194,10 +199,13 @@ async def create_ticket(  # pylint: disable=too-many-arguments,too-many-position
         ticket_data["priority"] = priority
     if status is not None:
         ticket_data["status"] = status
+    user_email = _get_authenticated_user_email()
     if requester_id is not None:
         ticket_data["requester_id"] = requester_id
-    elif (user_email := _get_authenticated_user_email()):
-        # Auto-attribute ticket to the authenticated user (requires admin role)
+    elif user_email:
+        # Auto-attribute ticket to the authenticated user. Zendesk creates the
+        # user from email if not found, so no lookup is required for the
+        # ticket-level requester field. See ADR-015 (Architecture F).
         ticket_data["requester"] = {"email": user_email}
     if assignee_id is not None:
         ticket_data["assignee_id"] = assignee_id
@@ -207,6 +215,18 @@ async def create_ticket(  # pylint: disable=too-many-arguments,too-many-position
         ticket_data["type"] = rtype
     if tags is not None:
         ticket_data["tags"] = tags
+
+    # comment.author_id requires an integer user_id, so the email→user_id
+    # lookup runs only when there is an authenticated email AND no explicit
+    # requester_id was provided (in which case the caller already controls
+    # attribution).
+    if user_email and requester_id is None:
+        author_user_id = await resolve_zendesk_user_id(user_email)
+        if author_user_id:
+            apply_ticket_attribution(
+                ticket_data, author_user_id,
+                set_requester=False, set_comment_author=True,
+            )
 
     result = await zendesk_client.create_ticket(ticket_data)
     t = result.get("ticket") or result
@@ -267,6 +287,18 @@ async def update_ticket(  # pylint: disable=too-many-arguments,too-many-position
         ticket_data["type"] = rtype
     if tags is not None:
         ticket_data["tags"] = tags
+
+    # When adding a comment to an existing ticket, attribute it to the
+    # authenticated user via comment.author_id. See ADR-015 (Architecture F).
+    if comment is not None:
+        user_email = _get_authenticated_user_email()
+        if user_email:
+            author_user_id = await resolve_zendesk_user_id(user_email)
+            if author_user_id:
+                apply_ticket_attribution(
+                    ticket_data, author_user_id,
+                    set_requester=False, set_comment_author=True,
+                )
 
     result = await zendesk_client.update_ticket(rid, ticket_data)
     ticket = result.get("ticket") or result
@@ -1001,6 +1033,19 @@ async def create_it_ticket(  # pylint: disable=too-many-arguments,too-many-posit
         ticket_data["email_ccs"] = [
             {"user_email": e, "action": "put"} for e in cc_emails
         ]
+
+    # Architecture F attribution: requester from the Entra email (Zendesk
+    # auto-creates the user if needed), comment.author_id from the resolved
+    # Zendesk user_id. See ADR-015.
+    user_email = _get_authenticated_user_email()
+    if user_email:
+        ticket_data.setdefault("requester", {"email": user_email})
+        author_user_id = await resolve_zendesk_user_id(user_email)
+        if author_user_id:
+            apply_ticket_attribution(
+                ticket_data, author_user_id,
+                set_requester=False, set_comment_author=True,
+            )
 
     result = await zendesk_client.create_ticket(ticket_data)
     t = result.get("ticket") or result

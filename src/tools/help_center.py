@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 
+from ..attribution import apply_article_attribution, get_current_entra_email
 from ..zendesk_client import zendesk_client
+from ..zendesk_user_resolver import resolve_zendesk_user_id
 
 
 def _article_summary(a: dict) -> dict:
@@ -83,6 +85,16 @@ async def create_article(  # pylint: disable=too-many-arguments,too-many-positio
     )
     if label_names is not None:
         article_data["label_names"] = label_names
+
+    # Architecture F attribution: when the caller didn't provide author_id,
+    # use the authenticated Entra user's Zendesk user_id. See ADR-015.
+    # update_article intentionally does NOT inject — changing author_id on
+    # update rewrites the article's author, not "last editor".
+    user_email = get_current_entra_email()
+    if user_email and "author_id" not in article_data:
+        user_id = await resolve_zendesk_user_id(user_email)
+        if user_id:
+            apply_article_attribution(article_data, user_id)
 
     result = await zendesk_client.create_article(article_data, section_id)
     a = result.get("article") or result
