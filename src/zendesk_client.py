@@ -197,21 +197,40 @@ class ZendeskClient:
         return f"{self.get_origin()}/hc/articles/{article_id}"
 
     def _get_auth_header(self) -> str:
-        """Return the Authorization header value for the current request."""
+        """Return the Authorization header value for the current request.
+
+        Under Architecture F (MCP_AUTH_MODE=entra, default since v3.10.0), the
+        FastMCP `get_access_token()` returns an Entra access token — useless to
+        Zendesk's API and would 401 every call. The Entra path therefore always
+        uses the service-account Basic credential. Per-user attribution is
+        injected at the tool layer (see src/attribution.py + src/zendesk_user_resolver.py).
+
+        Under Architecture C (MCP_AUTH_MODE=zendesk, legacy revert path), the
+        FastMCP `get_access_token()` returns the user's Zendesk OAuth token —
+        forward it as Bearer.
+
+        The explicit `authorization_var` from headers stays first-class for
+        backward compat with clients (Copilot Studio API-key connectors,
+        local stdio overrides) that supply their own Authorization header.
+        """
         per_request = authorization_var.get(None)
         if per_request:
             return per_request
 
-        # Check FastMCP OAuth token (Architecture C — per-user Zendesk token)
-        try:
-            from fastmcp.server.dependencies import get_access_token
-            access_token = get_access_token()
-            if access_token and access_token.token:
-                return f"Bearer {access_token.token}"
-        except (ImportError, RuntimeError):
-            pass  # Not in an OAuth context (stdio mode, prod path, etc.)
+        # Architecture F: skip FastMCP token forwarding to avoid sending an
+        # Entra Bearer to Zendesk. Only forward FastMCP tokens under the
+        # legacy Architecture-C revert path.
+        if os.environ.get("MCP_AUTH_MODE", "entra").lower() == "zendesk":
+            try:
+                from fastmcp.server.dependencies import get_access_token
+                access_token = get_access_token()
+                if access_token and access_token.token:
+                    return f"Bearer {access_token.token}"
+            except (ImportError, RuntimeError):
+                pass  # Not in an OAuth context (stdio mode, prod path, etc.)
 
-        # Fall back to API key (prod path, stdio mode)
+        # Service-account Basic auth (Architecture B path on /mcp/prod, and the
+        # Architecture-F default on /mcp/dev).
         env_name = zendesk_environment_var.get(None)
         if env_name == "dev":
             dev_email = os.environ.get("ZENDESK_DEV_EMAIL", self._email)

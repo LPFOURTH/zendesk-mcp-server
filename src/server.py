@@ -703,11 +703,104 @@ def create_prod_server() -> FastMCP:
     return _create_base_server(name_suffix=" (prod)")
 
 
-def create_dev_server() -> FastMCP:
-    """Zendesk OAuth via OAuthProxy (Architecture C).
+def _build_cosmos_client_storage() -> object | None:
+    """Build the Cosmos-backed, Fernet-encrypted OAuth state store, or None
+    when not configured. Shared by both /mcp/dev auth modes."""
+    cosmos_endpoint = os.environ.get("COSMOS_ENDPOINT")
+    storage_key = os.environ.get("MCP_STORAGE_ENCRYPTION_KEY")
+    if not (cosmos_endpoint and storage_key):
+        print(
+            "[zendesk-mcp] OAuth state: FastMCP default (file-based, wiped on deploy "
+            "— set COSMOS_ENDPOINT and MCP_STORAGE_ENCRYPTION_KEY for persistence)",
+            file=sys.stderr,
+        )
+        return None
+    from cryptography.fernet import Fernet
+    from key_value.aio.wrappers.encryption import FernetEncryptionWrapper
+
+    from .storage.cosmos_store import CosmosKeyValueStore
+
+    cosmos_store = CosmosKeyValueStore(
+        endpoint=cosmos_endpoint,
+        database="mcp",
+        container="oauth_state",
+    )
+    client_storage = FernetEncryptionWrapper(
+        key_value=cosmos_store,
+        fernet=Fernet(storage_key.encode()),
+    )
+    print(
+        "[zendesk-mcp] OAuth state: Cosmos DB (persistent, Fernet-encrypted)",
+        file=sys.stderr,
+    )
+    return client_storage
+
+
+def _create_dev_server_entra() -> FastMCP:
+    """Architecture F — Entra-on-Bearer.
+
+    `/mcp/dev` is protected by `AzureProvider` (Microsoft Entra ID OAuth).
+    The OAuth dance lands users on the Microsoft account picker; the resulting
+    Entra access token is validated server-side. Zendesk API calls happen
+    server-side using the service-account `ZENDESK_EMAIL` + `ZENDESK_API_TOKEN`
+    credentials; per-user attribution is injected into write-tool payloads
+    (`requester_id`, `comment.author_id`, `article.author_id`) — see
+    `src/attribution.py` and `src/zendesk_user_resolver.py`.
+
+    Required env vars: `ENTRA_CLIENT_ID`, `ENTRA_TENANT_ID`, `ENTRA_CLIENT_SECRET`,
+    `MCP_PUBLIC_URL`. Optional: `COSMOS_ENDPOINT`+`MCP_STORAGE_ENCRYPTION_KEY`
+    for persistent OAuth state, `MCP_JWT_SIGNING_KEY` for FastMCP JWT signing.
+    """
+    from fastmcp.server.auth.providers.azure import AzureProvider
+
+    client_id = os.environ.get("ENTRA_CLIENT_ID")
+    tenant_id = os.environ.get("ENTRA_TENANT_ID")
+    client_secret = os.environ.get("ENTRA_CLIENT_SECRET")
+    public_url = os.environ.get("MCP_PUBLIC_URL", "")
+    if not all([client_id, tenant_id, client_secret, public_url]):
+        print(
+            "[zendesk-mcp] Entra OAuth not configured (need ENTRA_CLIENT_ID, "
+            "ENTRA_TENANT_ID, ENTRA_CLIENT_SECRET, MCP_PUBLIC_URL) — "
+            "dev server has no auth",
+            file=sys.stderr,
+        )
+        return _create_base_server(name_suffix=" (dev)")
+
+    client_storage = _build_cosmos_client_storage()
+
+    azure_kwargs: dict[str, object] = dict(
+        client_id=client_id,
+        client_secret=client_secret,
+        tenant_id=tenant_id,
+        # Entra app exposes `access_as_user` under api://{client_id}/.
+        # AzureProvider prefixes it with identifier_uri automatically.
+        required_scopes=["access_as_user"],
+        base_url=f"{public_url}/mcp/dev",
+        require_authorization_consent=False,
+        jwt_signing_key=os.environ.get("MCP_JWT_SIGNING_KEY", ""),
+    )
+    if client_storage is not None:
+        azure_kwargs["client_storage"] = client_storage
+
+    auth = AzureProvider(**azure_kwargs)
+
+    print(
+        f"[zendesk-mcp] Dev server: Entra OAuth (tenant {tenant_id}, "
+        f"client {client_id}) — Zendesk calls via service-account",
+        file=sys.stderr,
+    )
+    return _create_base_server(name_suffix=" (dev)", auth=auth)
+
+
+def _create_dev_server_zendesk_oauth() -> FastMCP:
+    """Architecture C — Zendesk-OAuth-via-OAuthProxy (legacy, kept for revert).
 
     Each user authenticates directly with Zendesk. The MCP server uses their
     personal Zendesk OAuth token for all API calls. No service account.
+
+    Triggered by setting `MCP_AUTH_MODE=zendesk` on the dev server. This is the
+    pre-Architecture-F auth flow, retained as an env-flag revert path in case
+    Architecture F has an incident in prod. See ADR-015.
 
     Multi-env config: MCP_DEV_ENVIRONMENT selects which set of
     ZENDESK_<NAME>_* env vars to read (default: SANDBOX1).
@@ -728,45 +821,11 @@ def create_dev_server() -> FastMCP:
         )
         return _create_base_server(name_suffix=" (dev)")
 
-    # Update the ENVIRONMENTS dict so ZendeskClient resolves the correct
-    # base URL for this sandbox
     from .constants import ENVIRONMENTS
     ENVIRONMENTS["dev"]["base_url"] = f"https://{subdomain}.zendesk.com"
 
     token_verifier = ZendeskTokenVerifier(zendesk_subdomain=subdomain)
-
-    # Persistent OAuth state on Cosmos DB (see spec
-    # docs/superpowers/specs/2026-04-28-persistent-oauth-storage-design.md).
-    # Falls back to FastMCP's default file-based store (wiped on each deploy)
-    # if Cosmos isn't configured — useful for local dev.
-    cosmos_endpoint = os.environ.get("COSMOS_ENDPOINT")
-    storage_key = os.environ.get("MCP_STORAGE_ENCRYPTION_KEY")
-    client_storage = None
-    if cosmos_endpoint and storage_key:
-        from cryptography.fernet import Fernet
-        from key_value.aio.wrappers.encryption import FernetEncryptionWrapper
-
-        from .storage.cosmos_store import CosmosKeyValueStore
-
-        cosmos_store = CosmosKeyValueStore(
-            endpoint=cosmos_endpoint,
-            database="mcp",
-            container="oauth_state",
-        )
-        client_storage = FernetEncryptionWrapper(
-            key_value=cosmos_store,
-            fernet=Fernet(storage_key.encode()),
-        )
-        print(
-            "[zendesk-mcp] OAuth state: Cosmos DB (persistent, Fernet-encrypted)",
-            file=sys.stderr,
-        )
-    else:
-        print(
-            "[zendesk-mcp] OAuth state: FastMCP default (file-based, wiped on deploy "
-            "— set COSMOS_ENDPOINT and MCP_STORAGE_ENCRYPTION_KEY for persistence)",
-            file=sys.stderr,
-        )
+    client_storage = _build_cosmos_client_storage()
 
     auth_kwargs: dict[str, object] = dict(
         upstream_authorization_endpoint=f"https://{subdomain}.zendesk.com/oauth/authorizations/new",
@@ -784,14 +843,25 @@ def create_dev_server() -> FastMCP:
         auth_kwargs["client_storage"] = client_storage
 
     auth = ZendeskOAuthProxy(**auth_kwargs)
-
     print(
         f"[zendesk-mcp] Dev server: Zendesk OAuth ({env_name}) "
-        f"— subdomain {subdomain}",
+        f"— subdomain {subdomain} (LEGACY MODE — MCP_AUTH_MODE=zendesk)",
         file=sys.stderr,
     )
-
     return _create_base_server(name_suffix=" (dev)", auth=auth)
+
+
+def create_dev_server() -> FastMCP:
+    """Dispatch to Entra (Architecture F, default) or Zendesk-OAuth (legacy
+    revert path) based on `MCP_AUTH_MODE` env var.
+
+    - `MCP_AUTH_MODE=entra` (default since v3.10.0): _create_dev_server_entra
+    - `MCP_AUTH_MODE=zendesk`: _create_dev_server_zendesk_oauth (revert path)
+    """
+    mode = os.environ.get("MCP_AUTH_MODE", "entra").lower()
+    if mode == "zendesk":
+        return _create_dev_server_zendesk_oauth()
+    return _create_dev_server_entra()
 
 
 # Backward-compatible alias for stdio mode
