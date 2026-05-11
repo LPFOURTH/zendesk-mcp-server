@@ -146,11 +146,6 @@ ALL_TOOLS: list[dict[str, Any]] = [
                 "required": False,
                 "enum": ["new", "open", "pending", "hold", "solved", "closed"],
             },
-            "requester_id": {
-                "type": "integer",
-                "description": "User ID of the requester",
-                "required": False,
-            },
             "assignee_id": {
                 "type": "integer",
                 "description": "User ID of the assignee",

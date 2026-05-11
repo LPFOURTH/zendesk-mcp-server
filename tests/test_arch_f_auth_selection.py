@@ -146,12 +146,33 @@ class EntraModeTargetTests(unittest.TestCase):
             )
 
 
-class CreateTicketAttributionWithExplicitRequesterIdTests(unittest.TestCase):
-    """Per Codex's F4 critique: create_ticket should set comment.author_id
-    even when the caller provides an explicit requester_id. Author of the
-    comment != requester of the ticket in general."""
+class CreateTicketImpersonationGuardTests(unittest.TestCase):
+    """v3.10.2 security fix: create_ticket no longer accepts a caller-supplied
+    `requester_id`. The ticket is ALWAYS attributed to the authenticated Entra
+    user. Closes the impersonation vector where User X could pass
+    `requester_id=<User Y>` and create a ticket as another person.
+    """
 
-    def test_explicit_requester_id_does_not_skip_comment_author_id(self):
+    def test_create_ticket_rejects_caller_supplied_requester_id(self):
+        """Passing requester_id as a kwarg now raises TypeError — the param
+        was removed from the function signature. Callers via the MCP wire
+        get a schema-validation error from FastMCP at the boundary; callers
+        via direct Python import get the TypeError seen here."""
+        import asyncio
+        from src.tools import tickets  # noqa: WPS433
+
+        with self.assertRaises(TypeError):
+            asyncio.run(
+                tickets.create_ticket(
+                    subject="s", comment="c", requester_id=999  # impersonation attempt
+                )
+            )
+
+    def test_create_ticket_always_uses_authenticated_user_as_requester(self):
+        """Regardless of any caller hints, the requester injected into the
+        Zendesk payload is the authenticated Entra user's email — the only
+        source of identity in Architecture F.
+        """
         import asyncio
 
         env = {
@@ -174,30 +195,31 @@ class CreateTicketAttributionWithExplicitRequesterIdTests(unittest.TestCase):
                 return_value="https://x/agent/tickets/1"
             )
 
-            captured = {}
-
             async def fake_resolve(email):
-                captured["resolved_email"] = email
-                return 7777  # zendesk user_id for the entra user
+                # The resolver is called with the AUTHENTICATED email — not
+                # any caller-supplied value. We return the user_id for that
+                # email; the test asserts both the resolver input AND the
+                # injected requester are the same authenticated user.
+                return 7777
 
             def fake_auth_email():
-                return "user@fourth.com"
+                return "lukasz.pelcner@fourth.com"  # the authenticated user
 
             with patch.object(tickets, "zendesk_client", mock_client), \
                  patch.object(tickets, "_get_authenticated_user_email", fake_auth_email), \
                  patch.object(tickets, "resolve_zendesk_user_id", fake_resolve):
                 asyncio.run(
-                    tickets.create_ticket(
-                        subject="s", comment="c", requester_id=999
-                    )
+                    tickets.create_ticket(subject="s", comment="c")
                 )
 
         sent = mock_client.create_ticket.call_args.args[0]
-        # Explicit requester_id wins
-        self.assertEqual(sent.get("requester_id"), 999)
-        # Comment author_id still attributed to the authenticated user
+        # The requester is the AUTHENTICATED user, derived server-side
+        self.assertEqual(sent.get("requester"), {"email": "lukasz.pelcner@fourth.com"})
+        # No `requester_id` should appear — only the email-based `requester`
+        # object. (Zendesk auto-creates the user from email.)
+        self.assertNotIn("requester_id", sent)
+        # Comment.author_id is also the authenticated user, not anyone else
         self.assertEqual(sent["comment"].get("author_id"), 7777)
-        self.assertEqual(captured["resolved_email"], "user@fourth.com")
 
 
 if __name__ == "__main__":

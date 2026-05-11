@@ -178,7 +178,6 @@ async def create_ticket(  # pylint: disable=too-many-arguments,too-many-position
     comment: str,
     priority: str | None = None,
     status: str | None = None,
-    requester_id: int | None = None,
     assignee_id: int | None = None,
     group_id: int | None = None,
     ticket_type: str | None = None,
@@ -189,6 +188,15 @@ async def create_ticket(  # pylint: disable=too-many-arguments,too-many-position
 
     Accepts both `ticket_type` (canonical) and `type` (legacy alias).
     Canonical wins if both are provided.
+
+    SECURITY (v3.10.2): The ticket is ALWAYS attributed to the authenticated
+    Entra user — `requester_id` is no longer an accepted parameter. This
+    closes the impersonation vector where User X could call this tool with
+    `requester_id=<User Y>` and create a ticket as another person.
+
+    Legacy clients that pass `requester_id` will receive a schema-validation
+    error from FastMCP ("unknown property"). That's the intended security
+    surface — explicit rejection rather than silent acceptance. See ADR-015.
     """
     rtype = ticket_type if ticket_type is not None else type
     ticket_data: dict = {
@@ -200,12 +208,10 @@ async def create_ticket(  # pylint: disable=too-many-arguments,too-many-position
     if status is not None:
         ticket_data["status"] = status
     user_email = _get_authenticated_user_email()
-    if requester_id is not None:
-        ticket_data["requester_id"] = requester_id
-    elif user_email:
-        # Auto-attribute ticket to the authenticated user. Zendesk creates the
-        # user from email if not found, so no lookup is required for the
-        # ticket-level requester field. See ADR-015 (Architecture F).
+    if user_email:
+        # Architecture F: authenticated Entra user is ALWAYS the requester.
+        # No caller-side override. Zendesk auto-creates the user from email
+        # if not already present. See ADR-015.
         ticket_data["requester"] = {"email": user_email}
     if assignee_id is not None:
         ticket_data["assignee_id"] = assignee_id
@@ -216,11 +222,9 @@ async def create_ticket(  # pylint: disable=too-many-arguments,too-many-position
     if tags is not None:
         ticket_data["tags"] = tags
 
-    # comment.author_id is independent of requester_id — an agent can file a
-    # ticket on behalf of someone else (explicit requester_id) yet still want
-    # the comment they typed to be authored as themselves. Run the lookup
-    # whenever there's an authenticated email; service-account fallback if it
-    # can't resolve.
+    # comment.author_id is set to the authenticated user when resolvable.
+    # Under v3.10.2 there's no separate "requester vs author" branching —
+    # both are the authenticated user, always.
     if user_email:
         author_user_id = await resolve_zendesk_user_id(user_email)
         if author_user_id:
@@ -240,7 +244,7 @@ async def create_ticket(  # pylint: disable=too-many-arguments,too-many-position
         "type": t.get("type"),
         "requester_id": t.get("requester_id"),
         "created_at": t.get("created_at"),
-        "attributed_to": user_email if not requester_id and (user_email := _get_authenticated_user_email()) else None,
+        "attributed_to": user_email,
     }
     return f"Ticket #{t['id']} created successfully!\n\n{json.dumps(summary, indent=2)}"
 
