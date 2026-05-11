@@ -102,9 +102,20 @@ async def list_tickets(
     return json.dumps(summary, indent=2)
 
 
-async def get_ticket(ticket_id: int) -> str:
-    """Fetch a single ticket by ID with all comments."""
-    result = await zendesk_client.get_ticket(ticket_id)
+async def get_ticket(
+    ticket_id: int | None = None,
+    id: int | None = None,  # pylint: disable=redefined-builtin
+) -> str:
+    """Fetch a single ticket by ID with all comments.
+
+    Accepts both `ticket_id` (canonical) and `id` (legacy alias) so saved
+    Copilot Studio actions and prompt-cached tool calls from before the
+    pylint rename keep working. Canonical wins if both are provided.
+    """
+    rid = ticket_id if ticket_id is not None else id
+    if rid is None:
+        raise ValueError("ticket_id is required (legacy 'id' also accepted)")
+    result = await zendesk_client.get_ticket(rid)
     t = result.get("ticket") or result
     summary = {
         **_ticket_summary(t),
@@ -123,9 +134,15 @@ async def create_ticket(  # pylint: disable=too-many-arguments,too-many-position
     assignee_id: int | None = None,
     group_id: int | None = None,
     ticket_type: str | None = None,
+    type: str | None = None,  # pylint: disable=redefined-builtin
     tags: list[str] | None = None,
 ) -> str:
-    """Create a new Zendesk ticket."""
+    """Create a new Zendesk ticket.
+
+    Accepts both `ticket_type` (canonical) and `type` (legacy alias).
+    Canonical wins if both are provided.
+    """
+    rtype = ticket_type if ticket_type is not None else type
     ticket_data: dict = {
         "subject": subject,
         "comment": {"body": comment},
@@ -140,8 +157,8 @@ async def create_ticket(  # pylint: disable=too-many-arguments,too-many-position
         ticket_data["assignee_id"] = assignee_id
     if group_id is not None:
         ticket_data["group_id"] = group_id
-    if ticket_type is not None:
-        ticket_data["type"] = ticket_type
+    if rtype is not None:
+        ticket_data["type"] = rtype
     if tags is not None:
         ticket_data["tags"] = tags
 
@@ -160,7 +177,8 @@ async def create_ticket(  # pylint: disable=too-many-arguments,too-many-position
 
 
 async def update_ticket(  # pylint: disable=too-many-arguments,too-many-positional-arguments
-    ticket_id: int,
+    ticket_id: int | None = None,
+    id: int | None = None,  # pylint: disable=redefined-builtin
     subject: str | None = None,
     comment: str | None = None,
     internal_note: bool | None = None,
@@ -169,9 +187,18 @@ async def update_ticket(  # pylint: disable=too-many-arguments,too-many-position
     assignee_id: int | None = None,
     group_id: int | None = None,
     ticket_type: str | None = None,
+    type: str | None = None,  # pylint: disable=redefined-builtin
     tags: list[str] | None = None,
 ) -> str:
-    """Update an existing ticket; only provided fields are changed."""
+    """Update an existing ticket; only provided fields are changed.
+
+    Accepts legacy `id` / `type` kwargs in addition to canonical
+    `ticket_id` / `ticket_type`. Canonical wins if both are provided.
+    """
+    rid = ticket_id if ticket_id is not None else id
+    if rid is None:
+        raise ValueError("ticket_id is required (legacy 'id' also accepted)")
+    rtype = ticket_type if ticket_type is not None else type
     ticket_data: dict = {}
     if subject is not None:
         ticket_data["subject"] = subject
@@ -188,12 +215,12 @@ async def update_ticket(  # pylint: disable=too-many-arguments,too-many-position
         ticket_data["assignee_id"] = assignee_id
     if group_id is not None:
         ticket_data["group_id"] = group_id
-    if ticket_type is not None:
-        ticket_data["type"] = ticket_type
+    if rtype is not None:
+        ticket_data["type"] = rtype
     if tags is not None:
         ticket_data["tags"] = tags
 
-    result = await zendesk_client.update_ticket(ticket_id, ticket_data)
+    result = await zendesk_client.update_ticket(rid, ticket_data)
     ticket = result.get("ticket") or result
     summary = {
         "id": ticket.get("id"),
@@ -203,7 +230,7 @@ async def update_ticket(  # pylint: disable=too-many-arguments,too-many-position
         "priority": ticket.get("priority"),
         "updated_at": ticket.get("updated_at"),
     }
-    return f"Ticket #{ticket_id} updated successfully!\n\n{json.dumps(summary, indent=2)}"
+    return f"Ticket #{rid} updated successfully!\n\n{json.dumps(summary, indent=2)}"
 
 
 def _build_it_custom_fields(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-branches,too-many-locals,too-many-statements

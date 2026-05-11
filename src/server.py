@@ -92,7 +92,11 @@ ALL_TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "get_ticket",
-        "description": "Get a specific ticket by ID, including all comments and metadata.",
+        "description": (
+            "Get a specific ticket by ID, including all comments and metadata. "
+            "REQUIRES `ticket_id` (integer). Also accepts legacy alias `id` for "
+            "backward compatibility with saved Copilot Studio actions."
+        ),
         "parameters": {
             "ticket_id": {
                 "type": "integer",
@@ -298,7 +302,8 @@ ALL_TOOLS: list[dict[str, Any]] = [
     {
         "name": "update_ticket",
         "description": (
-            "Update an existing ticket. Only provided fields will be changed. "
+            "Update an existing ticket. REQUIRES `ticket_id` (integer); also accepts "
+            "legacy alias `id`. Only provided fields will be changed. "
             "Use internal_note=true for private comments visible only to agents. "
             "Messaging-channel tickets may not allow comments — if you get a 422 error, "
             "retry without the comment field."
