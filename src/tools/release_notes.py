@@ -1,7 +1,10 @@
+"""MCP tool handler for creating Zendesk Help Center release note articles."""
+
 from __future__ import annotations
 
 import json
 import re
+from typing import cast
 
 from ..constants import (
     ENVIRONMENTS,
@@ -16,6 +19,7 @@ from ..zendesk_client import zendesk_client
 
 
 def normalize_markdown(markdown_content: str) -> str:
+    """Strip leading whitespace from each line of the markdown string."""
     lines = []
     for line in markdown_content.strip().split("\n"):
         lines.append(line.lstrip())
@@ -23,6 +27,7 @@ def normalize_markdown(markdown_content: str) -> str:
 
 
 def find_section_headers(normalized_md: str) -> list[dict]:
+    """Return a list of all ### header matches with their text and character positions."""
     pattern = re.compile(r"^###\s*(?P<header>[^\n]+)\s*$", re.MULTILINE)
     results = []
     for m in pattern.finditer(normalized_md):
@@ -40,17 +45,19 @@ def find_section_headers(normalized_md: str) -> list[dict]:
 def extract_section_content(
     header_match: dict, headers: list[dict], index: int, normalized_md: str
 ) -> str:
+    """Extract the text between a header and the next one; newlines become <br> for descriptions."""
     start_pos = header_match["end"]
-    end_pos = headers[index + 1]["start"] if index < len(headers) - 1 else len(normalized_md)
+    end_pos = (
+        headers[index + 1]["start"] if index < len(headers) - 1 else len(normalized_md)
+    )
     raw_content = normalized_md[start_pos:end_pos].strip()
 
     is_description = "description" in header_match["header"].lower()
     return raw_content.replace("\n", "<br>") if is_description else raw_content
 
 
-def update_data_structure(
-    header: str, content: str, data_structure: dict
-) -> None:
+def update_data_structure(header: str, content: str, data_structure: dict) -> None:
+    """Write a parsed Name or Description value into the shared data structure dict."""
     func_match = re.match(
         r"Functionality\s+(\d+)\s+(Name|Description)", header, re.IGNORECASE
     )
@@ -65,12 +72,14 @@ def update_data_structure(
 def process_sections(
     headers: list[dict], normalized_md: str, release_data_structure: dict
 ) -> None:
+    """Iterate over all section headers and populate the release data structure."""
     for i, header_match in enumerate(headers):
         content = extract_section_content(header_match, headers, i, normalized_md)
         update_data_structure(header_match["header"], content, release_data_structure)
 
 
 def parse_markdown_content(markdown_content: str) -> dict:
+    """Validate and parse release note markdown into a structured dict of functionalities."""
     if not markdown_content or not markdown_content.strip():
         raise ValueError("Markdown content cannot be empty")
 
@@ -93,22 +102,19 @@ def parse_markdown_content(markdown_content: str) -> dict:
     process_sections(headers, normalized_md, release_data)
 
     if not release_data["functionalities"]:
-        raise ValueError(
-            "Release note must include at least one functionality section"
-        )
+        raise ValueError("Release note must include at least one functionality section")
 
     for func_key, func_data in release_data["functionalities"].items():
         if not func_data.get("Name") or not func_data["Name"].strip():
             raise ValueError(f"Functionality {func_key} is missing a valid name")
         if not func_data.get("Description") or not func_data["Description"].strip():
-            raise ValueError(
-                f"Functionality {func_key} is missing a valid description"
-            )
+            raise ValueError(f"Functionality {func_key} is missing a valid description")
 
     return release_data
 
 
 def format_whats_new_section(functionalities_data: dict) -> str:
+    """Render the What's New HTML block listing each functionality name and description."""
     template = """<ul>
       <li>
         <span class="wysiwyg-font-size-large"><strong>{name}<br></strong></span>
@@ -124,12 +130,15 @@ def format_whats_new_section(functionalities_data: dict) -> str:
         if "Name" not in func_data or "Description" not in func_data:
             continue
         sections.append(
-            template.format(name=func_data["Name"], description=func_data["Description"])
+            template.format(
+                name=func_data["Name"], description=func_data["Description"]
+            )
         )
     return "".join(sections)
 
 
 def format_release_note_info_steps_section(functionalities_data: dict) -> str:
+    """Render the Info & Steps HTML block with a heading and footer for each functionality."""
     template = """<p>
       <strong>
         <span class="wysiwyg-font-size-large">{name}</span>
@@ -148,10 +157,11 @@ def format_release_note_info_steps_section(functionalities_data: dict) -> str:
     return "".join(sections)
 
 
-async def create_release_note(
+async def create_release_note(  # pylint: disable=too-many-locals
     markdown_content: str,
     use_us_template: bool = False,
 ) -> str:
+    """Parse release note markdown and publish it as a draft Help Center article."""
     release_data = parse_markdown_content(markdown_content)
 
     feature_names = [
@@ -195,7 +205,9 @@ async def create_release_note(
         "author_id": env_config["author_id"],
     }
 
-    result = await zendesk_client.create_article(article_data, env_config["section_id"])
+    result = await zendesk_client.create_article(
+        article_data, cast(int, env_config["section_id"])
+    )
 
     created = result.get("article") or {}
     summary_lines = [

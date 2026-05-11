@@ -1,8 +1,11 @@
+"""FastMCP server for the Zendesk MCP integration."""
+
 from __future__ import annotations
 
 import json
 import os
 import sys
+from typing import Any
 
 from fastmcp import FastMCP
 
@@ -15,10 +18,13 @@ def _load_tools_config() -> dict:
         os.path.join(os.path.dirname(__file__), "..", "tools.config.json"),
     )
     try:
-        with open(config_path) as f:
+        with open(config_path, encoding="utf-8") as f:
             config = json.load(f)
     except (OSError, json.JSONDecodeError) as exc:
-        print(f"[zendesk-mcp] No tools.config.json found ({exc}), using defaults", file=sys.stderr)
+        print(
+            f"[zendesk-mcp] No tools.config.json found ({exc}), using defaults",
+            file=sys.stderr,
+        )
         return {"enabled": None, "disabled": set(), "source": "defaults"}
 
     preset = os.environ.get("TOOLS_PRESET")
@@ -44,7 +50,7 @@ def _load_tools_config() -> dict:
     return {"enabled": enabled, "disabled": disabled, "source": config_path}
 
 
-ALL_TOOLS = [
+ALL_TOOLS: list[dict[str, Any]] = [
     # -- tickets --
     {
         "name": "list_tickets",
@@ -54,19 +60,49 @@ ALL_TOOLS = [
             "lists instead of the generic search tool."
         ),
         "parameters": {
-            "page": {"type": "integer", "description": "Page number for pagination", "required": False},
-            "per_page": {"type": "integer", "description": "Number of tickets per page (1-100)", "required": False},
-            "status": {"type": "string", "description": "Optional ticket status filter", "required": False, "enum": ["new", "open", "pending", "hold", "solved", "closed"]},
-            "sort_by": {"type": "string", "description": "Field to sort by", "required": False},
-            "sort_order": {"type": "string", "description": "Sort order (asc or desc)", "required": False, "enum": ["asc", "desc"]},
+            "page": {
+                "type": "integer",
+                "description": "Page number for pagination",
+                "required": False,
+            },
+            "per_page": {
+                "type": "integer",
+                "description": "Number of tickets per page (1-100)",
+                "required": False,
+            },
+            "status": {
+                "type": "string",
+                "description": "Optional ticket status filter",
+                "required": False,
+                "enum": ["new", "open", "pending", "hold", "solved", "closed"],
+            },
+            "sort_by": {
+                "type": "string",
+                "description": "Field to sort by",
+                "required": False,
+            },
+            "sort_order": {
+                "type": "string",
+                "description": "Sort order (asc or desc)",
+                "required": False,
+                "enum": ["asc", "desc"],
+            },
         },
         "fn": tickets.list_tickets,
     },
     {
         "name": "get_ticket",
-        "description": "Get a specific ticket by ID, including all comments and metadata.",
+        "description": (
+            "Get a specific ticket by ID, including all comments and metadata. "
+            "REQUIRES `ticket_id` (integer). Also accepts legacy alias `id` for "
+            "backward compatibility with saved Copilot Studio actions."
+        ),
         "parameters": {
-            "id": {"type": "integer", "description": "Ticket ID", "required": True},
+            "ticket_id": {
+                "type": "integer",
+                "description": "Ticket ID",
+                "required": True,
+            },
         },
         "fn": tickets.get_ticket,
     },
@@ -74,37 +110,261 @@ ALL_TOOLS = [
         "name": "create_ticket",
         "description": "Create a new support ticket in Zendesk.",
         "parameters": {
-            "subject": {"type": "string", "description": "Ticket subject", "required": True},
-            "comment": {"type": "string", "description": "Ticket comment/description", "required": True},
-            "priority": {"type": "string", "description": "Ticket priority", "required": False, "enum": ["urgent", "high", "normal", "low"]},
-            "status": {"type": "string", "description": "Ticket status", "required": False, "enum": ["new", "open", "pending", "hold", "solved", "closed"]},
-            "requester_id": {"type": "integer", "description": "User ID of the requester", "required": False},
-            "assignee_id": {"type": "integer", "description": "User ID of the assignee", "required": False},
-            "group_id": {"type": "integer", "description": "Group ID for the ticket", "required": False},
-            "type": {"type": "string", "description": "Ticket type", "required": False, "enum": ["problem", "incident", "question", "task"]},
-            "tags": {"type": "array", "description": "Tags for the ticket", "required": False},
+            "subject": {
+                "type": "string",
+                "description": "Ticket subject",
+                "required": True,
+            },
+            "comment": {
+                "type": "string",
+                "description": "Ticket comment/description",
+                "required": True,
+            },
+            "priority": {
+                "type": "string",
+                "description": "Ticket priority",
+                "required": False,
+                "enum": ["urgent", "high", "normal", "low"],
+            },
+            "status": {
+                "type": "string",
+                "description": "Ticket status",
+                "required": False,
+                "enum": ["new", "open", "pending", "hold", "solved", "closed"],
+            },
+            "requester_id": {
+                "type": "integer",
+                "description": "User ID of the requester",
+                "required": False,
+            },
+            "assignee_id": {
+                "type": "integer",
+                "description": "User ID of the assignee",
+                "required": False,
+            },
+            "group_id": {
+                "type": "integer",
+                "description": "Group ID for the ticket",
+                "required": False,
+            },
+            "ticket_type": {
+                "type": "string",
+                "description": "Ticket type",
+                "required": False,
+                "enum": ["problem", "incident", "question", "task"],
+            },
+            "tags": {
+                "type": "array",
+                "description": "Tags for the ticket",
+                "required": False,
+            },
         },
         "fn": tickets.create_ticket,
     },
     {
+        "name": "create_it_ticket",
+        "description": (
+            "Create an IT Support Request ticket using the company's standard IT form. "
+            "Use this instead of create_ticket for all internal IT requests. "
+            "Follow the classification hierarchy: "
+            "(1) Set classification to 'incident' (something broken) or 'service_request' (need something). "
+            "(2) Set incident_category OR sr_category (matching classification) to one of: "
+            "bizapps | eit_software | eit_hardware | eit_general | eit_security_ops. "
+            "(3) Set the matching L3 field: incident+bizapps→incident_bizapps_item, "
+            "incident+eit_software→incident_software_item, "
+            "incident+eit_hardware→incident_hardware_item, "
+            "incident+eit_security_ops→incident_security_item, "
+            "service_request+bizapps→sr_bizapps_item, "
+            "service_request+eit_software→sr_software_item, "
+            "service_request+eit_hardware→sr_hardware_item, "
+            "service_request+eit_security_ops→sr_security_item, "
+            "either+eit_general→eit_general_subcategory. "
+            "(4) For eit_general_subcategory, also set the L4 field when applicable: "
+            "access_request→access_request_type, distribution_list→distribution_list_action, "
+            "fourth_office→fourth_office_type, email_trace→email_trace_type, "
+            "restore_lost_data→restore_data_type, virtual_machine→virtual_machine_type. "
+            "Always set impact and location. Do not set both incident_category and sr_category."
+        ),
+        "parameters": {
+            "subject": {
+                "type": "string",
+                "description": "One-line summary of the issue or request",
+                "required": True,
+            },
+            "description": {
+                "type": "string",
+                "description": "Full description: what the user was doing, what went wrong, steps taken, outcome",
+                "required": True,
+            },
+            "classification": {
+                "type": "string",
+                "required": True,
+                "enum": ["incident", "service_request"],
+            },
+            "incident_category": {
+                "type": "string",
+                "required": False,
+                "enum": [
+                    # dev
+                    "bizapps",
+                    "eit_software",
+                    "eit_hardware",
+                    "eit_general",
+                    "eit_security_ops",
+                    # prod
+                    "software",
+                    "hardware",
+                    "email_collaboration",
+                    "network",
+                    "access_management",
+                    "security",
+                    "facilities_office",
+                    "other",
+                ],
+            },
+            "sr_category": {
+                "type": "string",
+                "required": False,
+                "enum": [
+                    # dev
+                    "bizapps",
+                    "eit_software",
+                    "eit_hardware",
+                    "eit_general",
+                    "eit_security_ops",
+                    # prod
+                    "software",
+                    "application_access_request",
+                    "create_distribution_group",
+                    "desk_office_move",
+                    "dev_access",
+                    "email_trace",
+                    "file_restores",
+                    "fileshares",
+                    "gdpr_request",
+                    "lad_maintenance",
+                    "leaver_request",
+                    "new_software_request",
+                    "new_starter",
+                    "unblock_website",
+                    "update_distribution_group",
+                    "other",
+                ],
+            },
+            "incident_email_collab_item": {
+                "type": "string",
+                "required": False,
+                "description": "Prod only. For incident + email_collaboration category.",
+                "enum": ["confluence", "outlook", "sharepoint", "slack", "teams"],
+            },
+            "incident_network_item": {
+                "type": "string",
+                "required": False,
+                "description": "Prod only. For incident + network category.",
+                "enum": ["internet", "vpn", "wifi", "slow_connection"],
+            },
+            "incident_access_mgmt_item": {
+                "type": "string",
+                "required": False,
+                "description": "Prod only. For incident + access_management category.",
+                "enum": ["account_lockout", "mfa", "password_reset"],
+            },
+            "incident_facilities_item": {
+                "type": "string",
+                "required": False,
+                "description": "Prod only. For incident + facilities_office category.",
+                "enum": [
+                    "door_access",
+                    "meeting_rooms",
+                    "display_tvs",
+                    "printer",
+                    "video_conferencing",
+                ],
+            },
+            "impact": {
+                "type": "string",
+                "required": False,
+                "enum": ["low", "medium", "high", "very_high"],
+            },
+            "location": {
+                "type": "string",
+                "required": False,
+                "description": "User's current office or remote location",
+            },
+            "priority": {
+                "type": "string",
+                "required": False,
+                "enum": ["low", "normal", "high", "urgent"],
+            },
+        },
+        "fn": tickets.create_it_ticket,
+    },
+    {
         "name": "update_ticket",
         "description": (
-            "Update an existing ticket. Only provided fields will be changed. "
+            "Update an existing ticket. REQUIRES `ticket_id` (integer); also accepts "
+            "legacy alias `id`. Only provided fields will be changed. "
             "Use internal_note=true for private comments visible only to agents. "
             "Messaging-channel tickets may not allow comments — if you get a 422 error, "
             "retry without the comment field."
         ),
         "parameters": {
-            "id": {"type": "integer", "description": "Ticket ID to update", "required": True},
-            "subject": {"type": "string", "description": "Updated ticket subject", "required": False},
-            "comment": {"type": "string", "description": "New comment to add to the ticket", "required": False},
-            "internal_note": {"type": "boolean", "description": "If true, the comment is an internal note (private, visible to agents only). Defaults to false (public comment).", "required": False},
-            "priority": {"type": "string", "description": "Updated ticket priority", "required": False, "enum": ["urgent", "high", "normal", "low"]},
-            "status": {"type": "string", "description": "Updated ticket status", "required": False, "enum": ["new", "open", "pending", "hold", "solved", "closed"]},
-            "assignee_id": {"type": "integer", "description": "User ID of the new assignee", "required": False},
-            "group_id": {"type": "integer", "description": "New group ID for the ticket", "required": False},
-            "type": {"type": "string", "description": "Updated ticket type", "required": False, "enum": ["problem", "incident", "question", "task"]},
-            "tags": {"type": "array", "description": "Updated tags for the ticket", "required": False},
+            "ticket_id": {
+                "type": "integer",
+                "description": "Ticket ID to update",
+                "required": True,
+            },
+            "subject": {
+                "type": "string",
+                "description": "Updated ticket subject",
+                "required": False,
+            },
+            "comment": {
+                "type": "string",
+                "description": "New comment to add to the ticket",
+                "required": False,
+            },
+            "internal_note": {
+                "type": "boolean",
+                "description": (
+                    "If true, the comment is an internal note (private, visible to agents only)."
+                    " Defaults to false (public comment)."
+                ),
+                "required": False,
+            },
+            "priority": {
+                "type": "string",
+                "description": "Updated ticket priority",
+                "required": False,
+                "enum": ["urgent", "high", "normal", "low"],
+            },
+            "status": {
+                "type": "string",
+                "description": "Updated ticket status",
+                "required": False,
+                "enum": ["new", "open", "pending", "hold", "solved", "closed"],
+            },
+            "assignee_id": {
+                "type": "integer",
+                "description": "User ID of the new assignee",
+                "required": False,
+            },
+            "group_id": {
+                "type": "integer",
+                "description": "New group ID for the ticket",
+                "required": False,
+            },
+            "ticket_type": {
+                "type": "string",
+                "description": "Updated ticket type",
+                "required": False,
+                "enum": ["problem", "incident", "question", "task"],
+            },
+            "tags": {
+                "type": "array",
+                "description": "Updated tags for the ticket",
+                "required": False,
+            },
         },
         "fn": tickets.update_ticket,
     },
@@ -113,10 +373,27 @@ ALL_TOOLS = [
         "name": "list_articles",
         "description": "List Help Center articles. Returns paginated results.",
         "parameters": {
-            "page": {"type": "integer", "description": "Page number for pagination", "required": False},
-            "per_page": {"type": "integer", "description": "Number of articles per page (1-100)", "required": False},
-            "sort_by": {"type": "string", "description": "Field to sort by", "required": False},
-            "sort_order": {"type": "string", "description": "Sort order (asc or desc)", "required": False, "enum": ["asc", "desc"]},
+            "page": {
+                "type": "integer",
+                "description": "Page number for pagination",
+                "required": False,
+            },
+            "per_page": {
+                "type": "integer",
+                "description": "Number of articles per page (1-100)",
+                "required": False,
+            },
+            "sort_by": {
+                "type": "string",
+                "description": "Field to sort by",
+                "required": False,
+            },
+            "sort_order": {
+                "type": "string",
+                "description": "Sort order (asc or desc)",
+                "required": False,
+                "enum": ["asc", "desc"],
+            },
         },
         "fn": help_center.list_articles,
     },
@@ -132,14 +409,46 @@ ALL_TOOLS = [
         "name": "create_article",
         "description": "Create a new Help Center article in a specified section.",
         "parameters": {
-            "title": {"type": "string", "description": "Article title", "required": True},
-            "body": {"type": "string", "description": "Article body content (HTML)", "required": True},
-            "section_id": {"type": "integer", "description": "Section ID where the article will be created", "required": True},
-            "locale": {"type": "string", "description": "Article locale (e.g., 'en-us')", "required": False},
-            "draft": {"type": "boolean", "description": "Whether the article is a draft", "required": False},
-            "permission_group_id": {"type": "integer", "description": "Permission group ID for the article", "required": False},
-            "user_segment_id": {"type": "integer", "description": "User segment ID for the article", "required": False},
-            "label_names": {"type": "array", "description": "Labels for the article", "required": False},
+            "title": {
+                "type": "string",
+                "description": "Article title",
+                "required": True,
+            },
+            "body": {
+                "type": "string",
+                "description": "Article body content (HTML)",
+                "required": True,
+            },
+            "section_id": {
+                "type": "integer",
+                "description": "Section ID where the article will be created",
+                "required": True,
+            },
+            "locale": {
+                "type": "string",
+                "description": "Article locale (e.g., 'en-us')",
+                "required": False,
+            },
+            "draft": {
+                "type": "boolean",
+                "description": "Whether the article is a draft",
+                "required": False,
+            },
+            "permission_group_id": {
+                "type": "integer",
+                "description": "Permission group ID for the article",
+                "required": False,
+            },
+            "user_segment_id": {
+                "type": "integer",
+                "description": "User segment ID for the article",
+                "required": False,
+            },
+            "label_names": {
+                "type": "array",
+                "description": "Labels for the article",
+                "required": False,
+            },
         },
         "fn": help_center.create_article,
     },
@@ -147,14 +456,46 @@ ALL_TOOLS = [
         "name": "update_article",
         "description": "Update an existing Help Center article. Only provided fields will be changed.",
         "parameters": {
-            "id": {"type": "integer", "description": "Article ID to update", "required": True},
-            "title": {"type": "string", "description": "Updated article title", "required": False},
-            "body": {"type": "string", "description": "Updated article body content (HTML)", "required": False},
-            "locale": {"type": "string", "description": "Updated article locale (e.g., 'en-us')", "required": False},
-            "draft": {"type": "boolean", "description": "Whether the article is a draft", "required": False},
-            "permission_group_id": {"type": "integer", "description": "Updated permission group ID", "required": False},
-            "user_segment_id": {"type": "integer", "description": "Updated user segment ID", "required": False},
-            "label_names": {"type": "array", "description": "Updated labels", "required": False},
+            "id": {
+                "type": "integer",
+                "description": "Article ID to update",
+                "required": True,
+            },
+            "title": {
+                "type": "string",
+                "description": "Updated article title",
+                "required": False,
+            },
+            "body": {
+                "type": "string",
+                "description": "Updated article body content (HTML)",
+                "required": False,
+            },
+            "locale": {
+                "type": "string",
+                "description": "Updated article locale (e.g., 'en-us')",
+                "required": False,
+            },
+            "draft": {
+                "type": "boolean",
+                "description": "Whether the article is a draft",
+                "required": False,
+            },
+            "permission_group_id": {
+                "type": "integer",
+                "description": "Updated permission group ID",
+                "required": False,
+            },
+            "user_segment_id": {
+                "type": "integer",
+                "description": "Updated user segment ID",
+                "required": False,
+            },
+            "label_names": {
+                "type": "array",
+                "description": "Updated labels",
+                "required": False,
+            },
         },
         "fn": help_center.update_article,
     },
@@ -169,12 +510,41 @@ ALL_TOOLS = [
             "get_ticket, or get_article."
         ),
         "parameters": {
-            "query": {"type": "string", "description": "Search keywords or Zendesk query string", "required": True},
-            "scope": {"type": "string", "description": "Search scope: tickets for Zendesk tickets, articles for Help Center articles, or all for mixed search", "required": False, "enum": ["all", "tickets", "articles"]},
-            "sort_by": {"type": "string", "description": "Field to sort by", "required": False},
-            "sort_order": {"type": "string", "description": "Sort order (asc or desc)", "required": False, "enum": ["asc", "desc"]},
-            "page": {"type": "integer", "description": "Page number for pagination", "required": False},
-            "per_page": {"type": "integer", "description": "Number of results per page (1-100)", "required": False},
+            "query": {
+                "type": "string",
+                "description": "Search keywords or Zendesk query string",
+                "required": True,
+            },
+            "scope": {
+                "type": "string",
+                "description": (
+                    "Search scope: tickets for Zendesk tickets, articles for Help Center"
+                    " articles, or all for mixed search"
+                ),
+                "required": False,
+                "enum": ["all", "tickets", "articles"],
+            },
+            "sort_by": {
+                "type": "string",
+                "description": "Field to sort by",
+                "required": False,
+            },
+            "sort_order": {
+                "type": "string",
+                "description": "Sort order (asc or desc)",
+                "required": False,
+                "enum": ["asc", "desc"],
+            },
+            "page": {
+                "type": "integer",
+                "description": "Page number for pagination",
+                "required": False,
+            },
+            "per_page": {
+                "type": "integer",
+                "description": "Number of results per page (1-100)",
+                "required": False,
+            },
         },
         "fn": search.search,
     },
@@ -189,8 +559,18 @@ ALL_TOOLS = [
             "resolved from the environment (dev/prod). Only markdown_content is required."
         ),
         "parameters": {
-            "markdown_content": {"type": "string", "description": 'Markdown content with "### Functionality N Name" and "### Functionality N Description" sections', "required": True},
-            "use_us_template": {"type": "boolean", "description": "Use the US release note template (default: false = UK template)", "required": False},
+            "markdown_content": {
+                "type": "string",
+                "description": (
+                    'Markdown content with "### Functionality N Name"' ' and "### Functionality N Description" sections'
+                ),
+                "required": True,
+            },
+            "use_us_template": {
+                "type": "boolean",
+                "description": "Use the US release note template (default: false = UK template)",
+                "required": False,
+            },
         },
         "fn": release_notes.create_release_note,
     },
@@ -259,11 +639,7 @@ ALL_TOOLS = [
 def _create_base_server(name_suffix: str = "", auth=None) -> FastMCP:
     config = _load_tools_config()
 
-    env_disabled = {
-        t.strip()
-        for t in os.environ.get("DISABLED_TOOLS", "").split(",")
-        if t.strip()
-    }
+    env_disabled = {t.strip() for t in os.environ.get("DISABLED_TOOLS", "").split(",") if t.strip()}
     all_disabled = config["disabled"] | env_disabled
 
     enabled_tools = []

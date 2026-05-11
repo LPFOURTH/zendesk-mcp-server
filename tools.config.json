@@ -21,6 +21,13 @@
       "operation": "write",
       "description": "Create a new support ticket"
     },
+    "create_it_ticket": {
+      "enabled": false,
+      "_gate_reason": "Disabled until Phase A4-A6 verifies prod form IDs + tag maps end-to-end. Re-enable in Phase E1 only after one verified controlled prod create. Do NOT add to any preset's 'enable' list while this flag is false. See .debate/tasks.md Phase A3.",
+      "category": "tickets",
+      "operation": "write",
+      "description": "Create an IT Support Request ticket using the IT form"
+    },
     "update_ticket": {
       "enabled": true,
       "category": "tickets",
