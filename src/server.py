@@ -751,7 +751,7 @@ def _create_dev_server_entra() -> FastMCP:
     `MCP_PUBLIC_URL`. Optional: `COSMOS_ENDPOINT`+`MCP_STORAGE_ENCRYPTION_KEY`
     for persistent OAuth state, `MCP_JWT_SIGNING_KEY` for FastMCP JWT signing.
     """
-    from fastmcp.server.auth.providers.azure import AzureProvider
+    from .zendesk_token_verifier import EntraOAuthProxy
 
     client_id = os.environ.get("ENTRA_CLIENT_ID")
     tenant_id = os.environ.get("ENTRA_TENANT_ID")
@@ -793,7 +793,7 @@ def _create_dev_server_entra() -> FastMCP:
     if client_storage is not None:
         azure_kwargs["client_storage"] = client_storage
 
-    auth = AzureProvider(**azure_kwargs)
+    auth = EntraOAuthProxy(**azure_kwargs)
 
     print(
         f"[zendesk-mcp] Dev server: Entra OAuth (tenant {tenant_id}, "

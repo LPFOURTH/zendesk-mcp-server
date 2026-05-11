@@ -8,6 +8,7 @@ import httpx
 from pydantic import AnyHttpUrl
 
 from fastmcp.server.auth import OAuthProxy
+from fastmcp.server.auth.providers.azure import AzureProvider
 from fastmcp.server.auth.providers.jwt import AccessToken, TokenVerifier
 
 
@@ -19,6 +20,25 @@ class ZendeskOAuthProxy(OAuthProxy):
     MCP clients (Claude Code) require the resource URL in metadata to equal
     the URL they're registered with. Since users register the OAuth-gated
     URL (/mcp/dev), we override to return base_url unchanged.
+    """
+
+    def _get_resource_url(self, path: str | None = None) -> AnyHttpUrl | None:
+        return self.resource_base_url or self.base_url
+
+
+class EntraOAuthProxy(AzureProvider):
+    """AzureProvider that advertises the base_url as the protected-resource URL.
+
+    Same fix as ZendeskOAuthProxy but for the Architecture F (Entra) auth path:
+    FastMCP's default appends `/mcp` to base_url when constructing the
+    protected-resource metadata, yielding `.../mcp/dev/mcp`. MCP clients
+    (Claude Code's SDK) compare the advertised resource URL against the URL
+    they registered with — `.../mcp/dev` — and refuse to proceed on mismatch
+    (observed in v3.10.0: "SDK auth failed: Protected resource ... does not
+    match expected ... (or origin)").
+
+    Without this override the OAuth dance never makes it to the Microsoft
+    picker — the SDK aborts during metadata discovery.
     """
 
     def _get_resource_url(self, path: str | None = None) -> AnyHttpUrl | None:
