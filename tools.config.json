@@ -16,14 +16,15 @@
       "description": "Get a specific ticket by ID"
     },
     "create_ticket": {
-      "enabled": true,
+      "enabled": false,
+      "_disable_reason": "v3.10.3: deprecated in favor of create_it_ticket. Generic ticket creation bypasses the IT form's categorization (classification/category/L3/L4/impact/location). Users should use create_it_ticket which enforces the right form. If you ever need raw ticket creation (e.g. non-IT support tickets), flip enabled back to true.",
       "category": "tickets",
       "operation": "write",
       "description": "Create a new support ticket"
     },
     "create_it_ticket": {
-      "enabled": false,
-      "_gate_reason": "Disabled until Phase A4-A6 verifies prod form IDs + tag maps end-to-end. Re-enable in Phase E1 only after one verified controlled prod create. Do NOT add to any preset's 'enable' list while this flag is false. See .debate/tasks.md Phase A3.",
+      "enabled": true,
+      "_enabled_in": "v3.10.3 — replaces create_ticket. Uses the prod IT Support Request form (id 45108529620365) with full categorization. Architecture F per-user attribution: requester = authenticated Entra user, no caller-side impersonation possible. See ADR-014 / ADR-015.",
       "category": "tickets",
       "operation": "write",
       "description": "Create an IT Support Request ticket using the IT form"
@@ -118,8 +119,8 @@
       "disable": ["list_tickets", "get_ticket", "create_ticket", "update_ticket"]
     },
     "with_ideas": {
-      "_description": "All existing tools plus community ideas (read-only)",
-      "enable": ["list_tickets", "get_ticket", "create_ticket", "update_ticket", "list_articles", "get_article", "create_article", "update_article", "search", "create_release_note", "list_ideas", "get_idea", "search_ideas", "ideas_analytics"],
+      "_description": "All existing tools plus community ideas (read-only). Since v3.10.3: create_it_ticket replaces create_ticket — the generic ticket creator is dropped; the IT-form-aware one is in.",
+      "enable": ["list_tickets", "get_ticket", "create_it_ticket", "update_ticket", "list_articles", "get_article", "create_article", "update_article", "search", "create_release_note", "list_ideas", "get_idea", "search_ideas", "ideas_analytics"],
       "disable": []
     },
     "ideas_only": {

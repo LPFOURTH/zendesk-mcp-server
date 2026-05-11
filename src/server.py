@@ -13,12 +13,14 @@ from .tools import tickets, help_center, search, release_notes, community
 
 
 # Tools that must NEVER fail-open. If tools.config.json is missing/corrupt,
-# these stay disabled regardless of fallback behaviour. Anything in this set
-# must be explicitly enabled via a valid config file. See Phase A3 in
-# .debate/tasks.md (the create_it_ticket gate) — Codex flagged the fail-open
-# vulnerability where a broken Docker COPY or invalid JSON would silently
-# register a write-path tool that hasn't been verified in prod.
-_FAIL_CLOSED_TOOLS: frozenset[str] = frozenset({"create_it_ticket"})
+# these stay disabled regardless of fallback behaviour.
+#
+# v3.10.3: create_it_ticket removed from the fail-closed set — it's now the
+# primary IT-ticket creation tool and replaces create_ticket. create_ticket
+# (the generic one) is now in the set since it's been deprecated and we
+# don't want a broken config to accidentally surface a deprecated tool that
+# bypasses IT-form categorization.
+_FAIL_CLOSED_TOOLS: frozenset[str] = frozenset({"create_ticket"})
 
 
 def _load_tools_config() -> dict:
