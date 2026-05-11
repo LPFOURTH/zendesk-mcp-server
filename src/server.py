@@ -766,6 +766,14 @@ def _create_dev_server_entra() -> FastMCP:
         )
         return _create_base_server(name_suffix=" (dev)")
 
+    # Under Architecture F, /mcp/dev is logically "prod-Zendesk-with-Entra-
+    # validated-users". Route Zendesk REST calls to the prod subdomain
+    # (override the sandbox default in constants.ENVIRONMENTS["dev"]).
+    # Configurable via ZENDESK_PROD_SUBDOMAIN; default matches our prod tenant.
+    from .constants import ENVIRONMENTS
+    prod_subdomain = os.environ.get("ZENDESK_PROD_SUBDOMAIN", "hotschedules")
+    ENVIRONMENTS["dev"]["base_url"] = f"https://{prod_subdomain}.zendesk.com"
+
     client_storage = _build_cosmos_client_storage()
 
     azure_kwargs: dict[str, object] = dict(
@@ -777,7 +785,10 @@ def _create_dev_server_entra() -> FastMCP:
         required_scopes=["access_as_user"],
         base_url=f"{public_url}/mcp/dev",
         require_authorization_consent=False,
-        jwt_signing_key=os.environ.get("MCP_JWT_SIGNING_KEY", ""),
+        # Pass None (not empty string) so FastMCP derives a 32-byte key
+        # from the upstream client_secret via PBKDF2 instead of accepting
+        # an empty low-entropy literal.
+        jwt_signing_key=os.environ.get("MCP_JWT_SIGNING_KEY") or None,
     )
     if client_storage is not None:
         azure_kwargs["client_storage"] = client_storage

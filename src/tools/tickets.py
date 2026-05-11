@@ -216,11 +216,12 @@ async def create_ticket(  # pylint: disable=too-many-arguments,too-many-position
     if tags is not None:
         ticket_data["tags"] = tags
 
-    # comment.author_id requires an integer user_id, so the email→user_id
-    # lookup runs only when there is an authenticated email AND no explicit
-    # requester_id was provided (in which case the caller already controls
-    # attribution).
-    if user_email and requester_id is None:
+    # comment.author_id is independent of requester_id — an agent can file a
+    # ticket on behalf of someone else (explicit requester_id) yet still want
+    # the comment they typed to be authored as themselves. Run the lookup
+    # whenever there's an authenticated email; service-account fallback if it
+    # can't resolve.
+    if user_email:
         author_user_id = await resolve_zendesk_user_id(user_email)
         if author_user_id:
             apply_ticket_attribution(

@@ -231,8 +231,14 @@ class ZendeskClient:
 
         # Service-account Basic auth (Architecture B path on /mcp/prod, and the
         # Architecture-F default on /mcp/dev).
+        # Under MCP_AUTH_MODE=entra (Architecture F), Zendesk calls always use
+        # the prod service-account ZENDESK_EMAIL/ZENDESK_API_TOKEN — the
+        # legacy dev-sandbox `ZENDESK_DEV_*` env vars are NOT consulted even
+        # though the request path is `/mcp/dev`. Per ADR-015, /mcp/dev under
+        # Architecture F is logically prod-Zendesk-with-Entra-validated-users.
+        mode = os.environ.get("MCP_AUTH_MODE", "entra").lower()
         env_name = zendesk_environment_var.get(None)
-        if env_name == "dev":
+        if env_name == "dev" and mode == "zendesk":
             dev_email = os.environ.get("ZENDESK_DEV_EMAIL", self._email)
             dev_token = os.environ.get("ZENDESK_DEV_API_TOKEN", self._api_token)
             creds = f"{dev_email}/token:{dev_token}"
