@@ -62,6 +62,30 @@ class CreateItTicketGated(unittest.TestCase):
         )
         self.assertIn("get_ticket", tool_names)  # sanity: other tools still register
 
+    def test_fallback_when_config_missing_keeps_it_disabled(self):
+        """Codex B-review fix: if tools.config.json is missing/corrupt, the
+        fallback path must still keep create_it_ticket disabled. Verified by
+        pointing TOOLS_CONFIG at a nonexistent path and ensuring the tool is
+        absent from list_tools().
+        """
+        import asyncio
+
+        env_clean = {k: v for k, v in os.environ.items() if k not in {"TOOLS_PRESET", "DISABLED_TOOLS"}}
+        env_clean["TOOLS_CONFIG"] = "/nonexistent/tools.config.json"
+        with patch.dict(os.environ, env_clean, clear=True):
+            for mod in [m for m in list(sys.modules) if m.startswith("src.")]:
+                sys.modules.pop(mod, None)
+            from src.server import create_server  # noqa: WPS433
+            mcp = create_server()
+            tools = asyncio.run(mcp.list_tools())
+            tool_names = {t.name for t in tools}
+        self.assertNotIn(
+            "create_it_ticket",
+            tool_names,
+            "create_it_ticket must stay disabled on the config-missing fallback path.",
+        )
+        self.assertIn("get_ticket", tool_names)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

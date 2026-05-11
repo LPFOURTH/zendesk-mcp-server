@@ -12,6 +12,15 @@ from fastmcp import FastMCP
 from .tools import tickets, help_center, search, release_notes, community
 
 
+# Tools that must NEVER fail-open. If tools.config.json is missing/corrupt,
+# these stay disabled regardless of fallback behaviour. Anything in this set
+# must be explicitly enabled via a valid config file. See Phase A3 in
+# .debate/tasks.md (the create_it_ticket gate) — Codex flagged the fail-open
+# vulnerability where a broken Docker COPY or invalid JSON would silently
+# register a write-path tool that hasn't been verified in prod.
+_FAIL_CLOSED_TOOLS: frozenset[str] = frozenset({"create_it_ticket"})
+
+
 def _load_tools_config() -> dict:
     config_path = os.environ.get(
         "TOOLS_CONFIG",
@@ -22,10 +31,15 @@ def _load_tools_config() -> dict:
             config = json.load(f)
     except (OSError, json.JSONDecodeError) as exc:
         print(
-            f"[zendesk-mcp] No tools.config.json found ({exc}), using defaults",
+            f"[zendesk-mcp] No tools.config.json found ({exc}), using defaults "
+            f"— fail-closed tools stay disabled: {sorted(_FAIL_CLOSED_TOOLS)}",
             file=sys.stderr,
         )
-        return {"enabled": None, "disabled": set(), "source": "defaults"}
+        return {
+            "enabled": None,
+            "disabled": set(_FAIL_CLOSED_TOOLS),
+            "source": "defaults+fail-closed",
+        }
 
     preset = os.environ.get("TOOLS_PRESET")
     if preset and preset in config.get("presets", {}):
