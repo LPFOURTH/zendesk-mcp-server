@@ -1,10 +1,18 @@
 """Regression tests for Architecture F (v3.10.0) auth-mode/target selection.
 
-Codex flagged a real bug in the first F1+F2 commit: under MCP_AUTH_MODE=entra,
-the ZendeskClient would still pick up `ZENDESK_DEV_EMAIL` / `ZENDESK_DEV_API_TOKEN`
-whenever the request came in on `/mcp/dev` (which sets `zendesk-environment=dev`)
-and `ENVIRONMENTS["dev"]["base_url"]` was still the sandbox URL. These tests
-pin the corrected behavior so we don't regress.
+History:
+  v3.10.0 — pinned entra+dev to ALWAYS use ZENDESK_EMAIL/ZENDESK_API_TOKEN
+    (the dev-sandbox ZENDESK_DEV_* were a Path-C revert-only thing).
+  v3.10.4 — deliberately opted IN to ZENDESK_DEV_* under entra+dev so the
+    `/mcp/dev` path can use a different Zendesk service user (AI Agent)
+    while `/mcp/prod` stays on the original credential (Lukasz). Both
+    vars must be set or we fall back — no silent half-config.
+
+Invariants pinned below:
+  - /mcp/prod NEVER consults ZENDESK_DEV_* (protects prod from accidental swap)
+  - /mcp/dev under entra uses ZENDESK_DEV_* iff BOTH are set
+  - /mcp/dev under zendesk (legacy revert) still consults ZENDESK_DEV_* — but
+    only after the per-user Bearer branch declines (no FastMCP context).
 """
 from __future__ import annotations
 
@@ -28,50 +36,116 @@ def _import_fresh_zendesk_client():
 
 
 class EntraModeAuthHeaderTests(unittest.TestCase):
-    """Under MCP_AUTH_MODE=entra (default), /mcp/dev calls must use the
-    service-account credentials — NOT the ZENDESK_DEV_* dev-sandbox creds."""
+    """Under MCP_AUTH_MODE=entra (default), /mcp/dev opts into ZENDESK_DEV_*
+    when both are set (AI-Agent override, v3.10.4+); /mcp/prod ignores them."""
 
-    def test_entra_mode_dev_env_uses_service_account_basic(self):
+    def _basic_creds(self, header):
+        self.assertTrue(header.startswith("Basic "), header)
+        return base64.b64decode(header.split(" ", 1)[1]).decode()
+
+    def _header_for(self, env, env_name):
+        with patch.dict(os.environ, env, clear=True):
+            client = _import_fresh_zendesk_client()
+            from src.request_context import zendesk_environment_var
+            tok = zendesk_environment_var.set(env_name)
+            try:
+                return client._get_auth_header()
+            finally:
+                zendesk_environment_var.reset(tok)
+
+    def test_dev_env_uses_dev_creds_when_both_set(self):
+        """New v3.10.4 behavior: /mcp/dev under entra picks up ZENDESK_DEV_*
+        when both are set. This is how the AI-Agent service-user reaches Zendesk
+        on the /mcp/dev path while /mcp/prod stays on the original credential.
+        """
         env = {
             "MCP_AUTH_MODE": "entra",
             "ZENDESK_SUBDOMAIN": "hotschedules",
             "ZENDESK_EMAIL": "svc@fourth.com",
             "ZENDESK_API_TOKEN": "svc-token",
-            "ZENDESK_DEV_EMAIL": "leak@example.com",
-            "ZENDESK_DEV_API_TOKEN": "leak-token",
+            "ZENDESK_DEV_EMAIL": "aiagent@fourth.com",
+            "ZENDESK_DEV_API_TOKEN": "ai-token",
         }
-        with patch.dict(os.environ, env, clear=True):
-            client = _import_fresh_zendesk_client()
-            from src.request_context import zendesk_environment_var
-            tok = zendesk_environment_var.set("dev")
-            try:
-                header = client._get_auth_header()
-            finally:
-                zendesk_environment_var.reset(tok)
-        self.assertTrue(header.startswith("Basic "), header)
-        decoded = base64.b64decode(header.split(" ", 1)[1]).decode()
-        self.assertEqual(decoded, "svc@fourth.com/token:svc-token")
-        self.assertNotIn("leak", decoded)
+        decoded = self._basic_creds(self._header_for(env, "dev"))
+        self.assertEqual(decoded, "aiagent@fourth.com/token:ai-token")
 
-    def test_entra_mode_default_when_no_mode_set(self):
-        """When MCP_AUTH_MODE is absent, treat as 'entra' (the v3.10.0 default)."""
+    def test_prod_env_ignores_dev_creds_even_when_set(self):
+        """KEY PROTECTION: /mcp/prod must NEVER pick up ZENDESK_DEV_*. This is
+        what isolates the AI-Agent swap to /mcp/dev only."""
+        env = {
+            "MCP_AUTH_MODE": "entra",
+            "ZENDESK_SUBDOMAIN": "hotschedules",
+            "ZENDESK_EMAIL": "svc@fourth.com",
+            "ZENDESK_API_TOKEN": "svc-token",
+            "ZENDESK_DEV_EMAIL": "aiagent@fourth.com",
+            "ZENDESK_DEV_API_TOKEN": "ai-token",
+        }
+        decoded = self._basic_creds(self._header_for(env, "prod"))
+        self.assertEqual(decoded, "svc@fourth.com/token:svc-token")
+        self.assertNotIn("aiagent", decoded)
+
+    def test_dev_env_falls_back_when_only_one_dev_var_set(self):
+        """No silent half-config: if only one of ZENDESK_DEV_* is set, fall
+        through to the service account. Codex was firm about this."""
+        for only in ("ZENDESK_DEV_EMAIL", "ZENDESK_DEV_API_TOKEN"):
+            with self.subTest(only=only):
+                env = {
+                    "MCP_AUTH_MODE": "entra",
+                    "ZENDESK_SUBDOMAIN": "hotschedules",
+                    "ZENDESK_EMAIL": "svc@fourth.com",
+                    "ZENDESK_API_TOKEN": "svc-token",
+                    only: "partial@fourth.com" if only.endswith("EMAIL") else "partial-token",
+                }
+                decoded = self._basic_creds(self._header_for(env, "dev"))
+                self.assertEqual(decoded, "svc@fourth.com/token:svc-token")
+
+    def test_dev_env_falls_back_when_no_dev_vars_set(self):
+        """When ZENDESK_DEV_* are absent entirely, /mcp/dev uses the service
+        account — preserves the v3.10.0–3 default behavior."""
+        env = {
+            "MCP_AUTH_MODE": "entra",
+            "ZENDESK_SUBDOMAIN": "hotschedules",
+            "ZENDESK_EMAIL": "svc@fourth.com",
+            "ZENDESK_API_TOKEN": "svc-token",
+        }
+        decoded = self._basic_creds(self._header_for(env, "dev"))
+        self.assertEqual(decoded, "svc@fourth.com/token:svc-token")
+
+    def test_entra_mode_is_default_when_no_mode_set(self):
+        """MCP_AUTH_MODE absent → treat as 'entra'. Sanity check that the dev
+        override still applies on the unset default."""
         env = {
             "ZENDESK_SUBDOMAIN": "hotschedules",
             "ZENDESK_EMAIL": "svc@fourth.com",
             "ZENDESK_API_TOKEN": "svc-token",
-            "ZENDESK_DEV_EMAIL": "leak@example.com",
-            "ZENDESK_DEV_API_TOKEN": "leak-token",
+            "ZENDESK_DEV_EMAIL": "aiagent@fourth.com",
+            "ZENDESK_DEV_API_TOKEN": "ai-token",
+        }
+        decoded = self._basic_creds(self._header_for(env, "dev"))
+        self.assertEqual(decoded, "aiagent@fourth.com/token:ai-token")
+
+    def test_no_request_context_ignores_dev_creds(self):
+        """Per Codex round 3: stdio / headless / no-request-context callers
+        (where zendesk_environment_var is unset) MUST get the base service
+        account, never the AI-Agent dev creds — even when ZENDESK_DEV_* are
+        set in the environment. Only the routed `/mcp/dev` request path opts in.
+        """
+        env = {
+            "MCP_AUTH_MODE": "entra",
+            "ZENDESK_SUBDOMAIN": "hotschedules",
+            "ZENDESK_EMAIL": "svc@fourth.com",
+            "ZENDESK_API_TOKEN": "svc-token",
+            "ZENDESK_DEV_EMAIL": "aiagent@fourth.com",
+            "ZENDESK_DEV_API_TOKEN": "ai-token",
         }
         with patch.dict(os.environ, env, clear=True):
             client = _import_fresh_zendesk_client()
-            from src.request_context import zendesk_environment_var
-            tok = zendesk_environment_var.set("dev")
-            try:
-                header = client._get_auth_header()
-            finally:
-                zendesk_environment_var.reset(tok)
-        decoded = base64.b64decode(header.split(" ", 1)[1]).decode()
+            # NB: deliberately NOT setting zendesk_environment_var — simulates
+            # stdio mode where no request middleware ran.
+            header = client._get_auth_header()
+        decoded = self._basic_creds(header)
         self.assertEqual(decoded, "svc@fourth.com/token:svc-token")
+        self.assertNotIn("aiagent", decoded)
 
 
 class ZendeskModeAuthHeaderTests(unittest.TestCase):

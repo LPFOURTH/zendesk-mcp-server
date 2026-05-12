@@ -229,18 +229,16 @@ class ZendeskClient:
             except (ImportError, RuntimeError):
                 pass  # Not in an OAuth context (stdio mode, prod path, etc.)
 
-        # Service-account Basic auth (Architecture B path on /mcp/prod, and the
-        # Architecture-F default on /mcp/dev).
-        # Under MCP_AUTH_MODE=entra (Architecture F), Zendesk calls always use
-        # the prod service-account ZENDESK_EMAIL/ZENDESK_API_TOKEN — the
-        # legacy dev-sandbox `ZENDESK_DEV_*` env vars are NOT consulted even
-        # though the request path is `/mcp/dev`. Per ADR-015, /mcp/dev under
-        # Architecture F is logically prod-Zendesk-with-Entra-validated-users.
-        mode = os.environ.get("MCP_AUTH_MODE", "entra").lower()
+        # Service-account Basic auth.
+        #   /mcp/prod (env_name=prod): always uses ZENDESK_EMAIL/ZENDESK_API_TOKEN.
+        #   /mcp/dev  (env_name=dev): uses ZENDESK_DEV_EMAIL/ZENDESK_DEV_API_TOKEN
+        #     when BOTH are set (AI-Agent service-user override, v3.10.4+).
+        #     If only one is set, fall through to ZENDESK_EMAIL/ZENDESK_API_TOKEN
+        #     — no silent half-config, per Codex.
         env_name = zendesk_environment_var.get(None)
-        if env_name == "dev" and mode == "zendesk":
-            dev_email = os.environ.get("ZENDESK_DEV_EMAIL", self._email)
-            dev_token = os.environ.get("ZENDESK_DEV_API_TOKEN", self._api_token)
+        dev_email = os.environ.get("ZENDESK_DEV_EMAIL")
+        dev_token = os.environ.get("ZENDESK_DEV_API_TOKEN")
+        if env_name == "dev" and dev_email and dev_token:
             creds = f"{dev_email}/token:{dev_token}"
         else:
             creds = f"{self._email}/token:{self._api_token}"
