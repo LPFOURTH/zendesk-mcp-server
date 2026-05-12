@@ -219,6 +219,38 @@ class EntraModeTargetTests(unittest.TestCase):
                 ENVIRONMENTS["dev"]["base_url"], "https://fourthcompany.zendesk.com"
             )
 
+    def test_create_dev_server_entra_overrides_dev_it_form_config_to_prod(self):
+        """v3.10.5: under Architecture F, /mcp/dev IS prod Zendesk, so
+        IT_FORM_CONFIG["dev"] must mirror IT_FORM_CONFIG["prod"] — same form_id,
+        same brand_id (Fourth IT Help = 360004744852), same field IDs.
+
+        Without this, create_it_ticket on /mcp/dev sends sandbox brand_id
+        40387882303501 to prod Zendesk and gets 422 "Brand is invalid".
+        Matches Boyan's PR #1 design (https://github.com/fourth/zendesk-mcp-fourth/pull/1):
+        IT_FORM_CONFIG keys are aligned with the actual Zendesk target.
+        """
+        env = {
+            "MCP_AUTH_MODE": "entra",
+            "ENTRA_CLIENT_ID": "x", "ENTRA_TENANT_ID": "y", "ENTRA_CLIENT_SECRET": "z",
+            "MCP_PUBLIC_URL": "https://example.com",
+            "ZENDESK_SUBDOMAIN": "hotschedules",
+            "ZENDESK_EMAIL": "svc@fourth.com",
+            "ZENDESK_API_TOKEN": "svc-token",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            for m in [k for k in list(sys.modules) if k.startswith("src.")]:
+                sys.modules.pop(m, None)
+            from src.server import create_dev_server  # noqa: WPS433
+            from src.constants import IT_FORM_CONFIG  # noqa: WPS433
+            create_dev_server()
+            # Prod brand_id is the Fourth IT Help brand on hotschedules.zendesk.com
+            self.assertEqual(IT_FORM_CONFIG["dev"]["brand_id"], 360004744852)
+            self.assertEqual(IT_FORM_CONFIG["dev"]["form_id"], 45108529620365)
+            # Field IDs must also align — dev sandbox had different ones.
+            self.assertEqual(
+                IT_FORM_CONFIG["dev"]["fields"], IT_FORM_CONFIG["prod"]["fields"]
+            )
+
 
 class CreateTicketImpersonationGuardTests(unittest.TestCase):
     """v3.10.2 security fix: create_ticket no longer accepts a caller-supplied

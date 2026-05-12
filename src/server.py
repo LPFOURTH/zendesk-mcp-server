@@ -767,9 +767,18 @@ def _create_dev_server_entra() -> FastMCP:
     # validated-users". Route Zendesk REST calls to the prod subdomain
     # (override the sandbox default in constants.ENVIRONMENTS["dev"]).
     # Configurable via ZENDESK_PROD_SUBDOMAIN; default matches our prod tenant.
-    from .constants import ENVIRONMENTS
+    from .constants import ENVIRONMENTS, IT_FORM_CONFIG
     prod_subdomain = os.environ.get("ZENDESK_PROD_SUBDOMAIN", "hotschedules")
     ENVIRONMENTS["dev"]["base_url"] = f"https://{prod_subdomain}.zendesk.com"
+    # Per Boyan's PR #1 design: IT_FORM_CONFIG keys match the actual Zendesk
+    # target. Under Architecture F, /mcp/dev IS prod Zendesk, so create_it_ticket
+    # on /mcp/dev must use the prod form_id, brand_id (Fourth IT Help =
+    # 360004744852), and field IDs. Without this override the dev config would
+    # send sandbox brand_id 40387882303501 to prod Zendesk → 422 "Brand is invalid".
+    # Under MCP_AUTH_MODE=zendesk (revert path, _create_dev_server_zendesk_oauth),
+    # /mcp/dev returns to sandbox Zendesk and the original IT_FORM_CONFIG["dev"]
+    # sandbox values stay correct — no override there.
+    IT_FORM_CONFIG["dev"] = IT_FORM_CONFIG["prod"]
 
     client_storage = _build_cosmos_client_storage()
 
