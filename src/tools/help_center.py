@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 from ..attribution import apply_article_attribution, get_current_entra_email
 from ..zendesk_client import zendesk_client
@@ -90,11 +91,17 @@ async def create_article(  # pylint: disable=too-many-arguments,too-many-positio
     # use the authenticated Entra user's Zendesk user_id. See ADR-015.
     # update_article intentionally does NOT inject — changing author_id on
     # update rewrites the article's author, not "last editor".
-    user_email = get_current_entra_email()
-    if user_email and "author_id" not in article_data:
-        user_id = await resolve_zendesk_user_id(user_email)
-        if user_id:
-            apply_article_attribution(article_data, user_id)
+    #
+    # Skip under MCP_AUTH_MODE=zendesk (Architecture C revert): the Zendesk
+    # OAuth caller IS the user, so Zendesk attributes the article to them
+    # natively. Server-side override is redundant and can 422 if the user
+    # lacks Help Center publish permission for a different author_id.
+    if os.environ.get("MCP_AUTH_MODE", "entra").lower() == "entra":
+        user_email = get_current_entra_email()
+        if user_email and "author_id" not in article_data:
+            user_id = await resolve_zendesk_user_id(user_email)
+            if user_id:
+                apply_article_attribution(article_data, user_id)
 
     result = await zendesk_client.create_article(article_data, section_id)
     a = result.get("article") or result

@@ -152,6 +152,162 @@ class AttributionGatedToArchFTests(unittest.TestCase):
         self.assertEqual(sent["comment"].get("author_id"), 5555)
 
 
+class CreateItTicketAttributionTests(unittest.TestCase):
+    """Direct create_it_ticket payload tests (per codex code-review NIT).
+    Pins that the gate applies to the headline write tool too."""
+
+    def _run_create_it_ticket(self, auth_mode: str | None) -> dict:
+        env = {
+            "ZENDESK_SUBDOMAIN": "hotschedules",
+            "ZENDESK_EMAIL": "svc@fourth.com",
+            "ZENDESK_API_TOKEN": "svc-token",
+        }
+        if auth_mode is not None:
+            env["MCP_AUTH_MODE"] = auth_mode
+        with patch.dict(os.environ, env, clear=True):
+            _reset_src_modules()
+            from src.tools import tickets  # noqa: WPS433
+            from src.constants import IT_FORM_CONFIG  # noqa: WPS433
+            # Ensure dev IT form has a brand_id so the test exercises the
+            # standard payload-build path.
+            self.assertIsNotNone(IT_FORM_CONFIG["dev"]["fields"])
+
+            mock_client = MagicMock()
+            mock_client.create_ticket = AsyncMock(
+                return_value={"ticket": {"id": 42, "subject": "x"}}
+            )
+            mock_client.get_agent_ticket_url = MagicMock(
+                return_value="https://x/agent/tickets/42"
+            )
+
+            with patch.object(tickets, "zendesk_client", mock_client), \
+                 patch.object(tickets, "_get_authenticated_user_email",
+                              lambda: "user@fourth.com"), \
+                 patch.object(tickets, "resolve_zendesk_user_id",
+                              AsyncMock(return_value=9999)):
+                asyncio.run(
+                    tickets.create_it_ticket(
+                        subject="Test",
+                        description="body",
+                        classification="service_request",
+                        sr_category="eit_general",
+                    )
+                )
+
+            return mock_client.create_ticket.call_args.args[0]
+
+    def test_create_it_ticket_skips_attribution_under_arch_c(self):
+        sent = self._run_create_it_ticket(auth_mode="zendesk")
+        self.assertNotIn("requester", sent)
+        self.assertNotIn("author_id", sent.get("comment", {}))
+
+    def test_create_it_ticket_injects_attribution_under_arch_f(self):
+        sent = self._run_create_it_ticket(auth_mode="entra")
+        self.assertEqual(sent.get("requester"), {"email": "user@fourth.com"})
+        self.assertEqual(sent["comment"].get("author_id"), 9999)
+
+    def test_create_it_ticket_default_mode_is_entra(self):
+        """Missing MCP_AUTH_MODE → arch-F semantics (no silent drop)."""
+        sent = self._run_create_it_ticket(auth_mode=None)
+        self.assertEqual(sent.get("requester"), {"email": "user@fourth.com"})
+
+
+class CreateArticleAttributionGatedTests(unittest.TestCase):
+    """help_center.create_article must skip author_id injection under
+    Architecture C (codex BLOCK from 2026-05-14 code review)."""
+
+    def _run_create_article(self, auth_mode: str) -> dict:
+        env = {
+            "MCP_AUTH_MODE": auth_mode,
+            "ZENDESK_SUBDOMAIN": "hotschedules",
+            "ZENDESK_EMAIL": "svc@fourth.com",
+            "ZENDESK_API_TOKEN": "svc-token",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            _reset_src_modules()
+            from src.tools import help_center  # noqa: WPS433
+
+            mock_client = MagicMock()
+            mock_client.create_article = AsyncMock(
+                return_value={"article": {"id": 1, "title": "x"}}
+            )
+            mock_client.get_help_center_article_url = MagicMock(
+                return_value="https://x/hc/articles/1"
+            )
+
+            with patch.object(help_center, "zendesk_client", mock_client), \
+                 patch.object(help_center, "get_current_entra_email",
+                              lambda: "author@fourth.com"), \
+                 patch.object(help_center, "resolve_zendesk_user_id",
+                              AsyncMock(return_value=4242)):
+                asyncio.run(
+                    help_center.create_article(
+                        title="t", body="b", section_id=123
+                    )
+                )
+
+            return mock_client.create_article.call_args.args[0]
+
+    def test_create_article_skips_author_under_arch_c(self):
+        sent = self._run_create_article(auth_mode="zendesk")
+        self.assertNotIn("author_id", sent)
+
+    def test_create_article_injects_author_under_arch_f(self):
+        sent = self._run_create_article(auth_mode="entra")
+        self.assertEqual(sent.get("author_id"), 4242)
+
+
+class CreateReleaseNoteAttributionGatedTests(unittest.TestCase):
+    """release_notes.create_release_note must skip the hardcoded
+    env_config["author_id"] under Architecture C — under per-user OAuth,
+    setting a different author_id can 422 if the user lacks permission
+    (codex BLOCK from 2026-05-14 code review)."""
+
+    SAMPLE_MD = (
+        "### Functionality 1 Name\n"
+        "Test Feature\n\n"
+        "### Functionality 1 Description\n"
+        "Description body\n"
+    )
+
+    def _run_create_release_note(self, auth_mode: str) -> dict:
+        env = {
+            "MCP_AUTH_MODE": auth_mode,
+            "ZENDESK_SUBDOMAIN": "hotschedules",
+            "ZENDESK_EMAIL": "svc@fourth.com",
+            "ZENDESK_API_TOKEN": "svc-token",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            _reset_src_modules()
+            from src.tools import release_notes  # noqa: WPS433
+
+            mock_client = MagicMock()
+            mock_client.create_article = AsyncMock(
+                return_value={"article": {"id": 9, "title": "rn",
+                                         "html_url": "https://x/hc/9"}}
+            )
+
+            with patch.object(release_notes, "zendesk_client", mock_client):
+                asyncio.run(
+                    release_notes.create_release_note(
+                        markdown_content=self.SAMPLE_MD,
+                        use_us_template=False,
+                    )
+                )
+
+            return mock_client.create_article.call_args.args[0]
+
+    def test_release_note_skips_hardcoded_author_under_arch_c(self):
+        sent = self._run_create_release_note(auth_mode="zendesk")
+        self.assertNotIn("author_id", sent)
+
+    def test_release_note_keeps_hardcoded_author_under_arch_f(self):
+        """Arch F behavior preserved: bot author_id is set per env config."""
+        sent = self._run_create_release_note(auth_mode="entra")
+        self.assertIn("author_id", sent)
+        self.assertIsInstance(sent["author_id"], int)
+
+
 class ArchCProdItFormOverrideTests(unittest.TestCase):
     """_create_dev_server_zendesk_oauth must override IT_FORM_CONFIG["dev"]
     to the prod values when MCP_DEV_ENVIRONMENT=PROD — otherwise
