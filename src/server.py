@@ -838,8 +838,17 @@ def _create_dev_server_zendesk_oauth() -> FastMCP:
         )
         return _create_base_server(name_suffix=" (dev)")
 
-    from .constants import ENVIRONMENTS
+    from .constants import ENVIRONMENTS, IT_FORM_CONFIG
     ENVIRONMENTS["dev"]["base_url"] = f"https://{subdomain}.zendesk.com"
+
+    # When MCP_DEV_ENVIRONMENT=PROD under Architecture C, /mcp/dev points at the
+    # prod Zendesk tenant via per-user OAuth. The IT_FORM_CONFIG["dev"] sandbox
+    # form/brand/field IDs would 422 against prod ("Brand is invalid"), so swap
+    # in the prod values — same override Architecture F applies in the Entra
+    # branch (_create_dev_server_entra). For SANDBOX1/other dev envs the
+    # sandbox defaults stay correct.
+    if env_name == "PROD":
+        IT_FORM_CONFIG["dev"] = IT_FORM_CONFIG["prod"]
 
     token_verifier = ZendeskTokenVerifier(zendesk_subdomain=subdomain)
     client_storage = _build_cosmos_client_storage()
@@ -854,7 +863,10 @@ def _create_dev_server_zendesk_oauth() -> FastMCP:
         token_endpoint_auth_method="client_secret_post",
         valid_scopes=["read", "write"],
         require_authorization_consent=False,
-        jwt_signing_key=os.environ.get("MCP_JWT_SIGNING_KEY", ""),
+        # Pass None (not empty string) so FastMCP derives a 32-byte key
+        # at boot. Empty string is rejected by some FastMCP versions. Matches
+        # the Entra branch's handling at _create_dev_server_entra.
+        jwt_signing_key=os.environ.get("MCP_JWT_SIGNING_KEY") or None,
     )
     if client_storage is not None:
         auth_kwargs["client_storage"] = client_storage
