@@ -1,0 +1,578 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Zendesk MCP — Architecture C (current)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      --bg: #0d1017;
+      --panel: #141925;
+      --panel-2: #1c2230;
+      --border: #2a3142;
+      --text: #e6e8ee;
+      --muted: #8b93a7;
+      --accent: #6ea8ff;
+      --accent-2: #ffaa66;
+      --lane: #1a2030;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
+      font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    header {
+      padding: 14px 24px; border-bottom: 1px solid var(--border);
+      background: linear-gradient(180deg, #161b27 0%, #11151e 100%);
+      position: sticky; top: 0; z-index: 50;
+    }
+    header h1 { font-size: 17px; margin: 0 0 4px; font-weight: 600; }
+    header .sub { color: var(--muted); font-size: 12.5px; }
+    header .status {
+      display: inline-block; margin-left: 10px; padding: 2px 9px; border-radius: 4px;
+      background: #1d3a2a; color: #7be0a8; font-size: 11px; font-weight: 700;
+      letter-spacing: 0.4px; text-transform: uppercase;
+    }
+    .tabs { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+    .tab {
+      background: var(--panel); color: var(--text); border: 1px solid var(--border);
+      padding: 7px 14px; border-radius: 999px; cursor: pointer; font-size: 12.5px;
+      transition: all .15s ease;
+    }
+    .tab:hover { border-color: var(--accent); }
+    .tab.active { background: var(--accent); color: #0b1020; border-color: var(--accent); font-weight: 600; }
+    .legend {
+      padding: 10px 24px; border-bottom: 1px solid var(--border);
+      color: var(--muted); font-size: 11.5px;
+      display: flex; gap: 12px; flex-wrap: wrap; align-items: center;
+      background: var(--panel);
+    }
+    .legend strong { color: var(--text); font-weight: 600; margin-right: 6px; }
+    .role-pill {
+      font-size: 10px; padding: 2px 8px; border-radius: 4px; font-weight: 700;
+      letter-spacing: 0.4px; text-transform: uppercase;
+    }
+    .role-auth { background: #3a2255; color: #e0b8ff; }
+    .role-callback { background: #224f3a; color: #9be8c0; }
+    .role-token { background: #3a4a22; color: #d8f29b; }
+    .role-rest { background: #1f3a5c; color: #9ec6ff; }
+    .role-mcp { background: #5c361f; color: #ffc69e; }
+    .role-secret { background: #5c1f4a; color: #ff9ed8; }
+    .role-blob { background: #1f5c5c; color: #9eecff; }
+    .role-config { background: #444; color: #ddd; }
+    .role-redirect { background: #553a22; color: #ffd9a8; }
+
+    main { padding: 0; }
+    .diagram-wrap { padding: 8px 0 0; }
+    svg.sequence {
+      display: block; margin: 0 auto; background: var(--bg);
+      font-family: ui-sans-serif, system-ui;
+    }
+    .actor rect {
+      fill: var(--panel-2); stroke: var(--accent); stroke-width: 1.5;
+    }
+    .actor text {
+      fill: var(--text); font-size: 13px; font-weight: 600; text-anchor: middle;
+    }
+    .actor .sub { fill: var(--muted); font-size: 10.5px; font-weight: 400; }
+    .lane {
+      stroke: var(--border); stroke-width: 1; stroke-dasharray: 4 4; opacity: 0.6;
+    }
+    .step-row {
+      fill: transparent; cursor: pointer;
+    }
+    .step-row:hover { fill: rgba(110,168,255,0.06); }
+    .step-row.active { fill: rgba(255,170,102,0.08); }
+    .step-num {
+      fill: var(--panel-2); stroke: var(--border); stroke-width: 1;
+    }
+    .step-num.active { fill: var(--accent-2); stroke: var(--accent-2); }
+    .step-num-text { fill: var(--muted); font-size: 11px; font-weight: 700; text-anchor: middle; }
+    .step-num.active + .step-num-text, .step-row.active .step-num-text { fill: #1b1306; }
+    .arrow {
+      stroke-width: 2; fill: none;
+    }
+    .arrow-head { stroke-width: 0; }
+    .arrow-label {
+      font-size: 11.5px; font-weight: 600; fill: var(--text);
+      paint-order: stroke; stroke: var(--bg); stroke-width: 3px;
+    }
+    .step-row.active .arrow { stroke-width: 3; filter: drop-shadow(0 0 6px rgba(255,170,102,0.5)); }
+    .step-detail {
+      padding: 0 24px 18px;
+    }
+    .step-detail-box {
+      background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--accent-2);
+      border-radius: 8px; padding: 14px 18px; margin: 6px 0; max-width: 1100px;
+    }
+    .step-detail-box .head {
+      display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap;
+    }
+    .step-detail-box .num {
+      display: inline-block; width: 26px; height: 26px; border-radius: 50%;
+      background: var(--accent-2); color: #1b1306; text-align: center; line-height: 26px;
+      font-size: 12px; font-weight: 700;
+    }
+    .step-detail-box .actors { font-size: 13px; font-weight: 600; }
+    .step-detail-box .actors .arr { color: var(--accent-2); margin: 0 6px; }
+    .step-detail-box .url {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px; color: var(--accent); word-break: break-all; margin: 6px 0;
+    }
+    .step-detail-box .payload {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11.5px; color: var(--muted); margin: 6px 0;
+      background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+      padding: 7px 10px; white-space: pre-wrap; word-break: break-all;
+    }
+    .step-detail-box .note { font-size: 12.5px; color: var(--muted); font-style: italic; margin: 6px 0 0; }
+    .footer-info {
+      padding: 16px 24px 24px; border-top: 1px solid var(--border);
+      color: var(--muted); font-size: 12px; margin-top: 12px; max-width: 1200px;
+    }
+    .footer-info code { background: var(--panel-2); padding: 1px 6px; border-radius: 3px;
+      font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--text); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Zendesk MCP — Workflow Map <span class="status">Architecture C · live</span></h1>
+    <div class="sub">Per-user Zendesk OAuth. <code style="font-family: ui-monospace; background: var(--panel-2); padding: 1px 5px; border-radius: 3px;">MCP_AUTH_MODE=zendesk</code> · revision <code style="font-family: ui-monospace; background: var(--panel-2); padding: 1px 5px; border-radius: 3px;">--0000111</code> · live since 2026-05-14.</div>
+    <div class="tabs" id="tabs"></div>
+  </header>
+
+  <div class="legend" id="legend"><strong>Edge roles:</strong></div>
+
+  <main>
+    <div class="diagram-wrap">
+      <svg class="sequence" id="diagram" xmlns="http://www.w3.org/2000/svg"></svg>
+    </div>
+    <div class="step-detail" id="detail"></div>
+  </main>
+
+  <div class="footer-info">
+    <strong>How to read this:</strong> actor lanes run left → right; time flows top → bottom; each numbered arrow is one HTTP call or in-process invocation.
+    Click any row (arrow or number) to expand its full details below. Switch flows with the tabs above.
+    <br><br>
+    <strong>Source of truth:</strong> <code>src/server.py:_create_dev_server_zendesk_oauth()</code> · <code>src/zendesk_token_verifier.py:ZendeskOAuthProxy</code> · <code>src/tools/tickets.py</code>.
+    Architectural decisions in <code>docs/DESIGN_DECISIONS.md</code>; accepted risks in <code>docs/LIMITATIONS.md</code>.
+  </div>
+
+  <script>
+  // ============================================================================
+  // DATA — only current-architecture flows. To re-add other flows later, drop
+  // them into FLOWS with the same shape.
+  // ============================================================================
+  const ACTORS = [
+    { id: "user",    label: "End User",       sub: "browser" },
+    { id: "client",  label: "MCP Client",     sub: "Claude Code / Copilot" },
+    { id: "oauth",   label: "OAuth Proxy",    sub: "ZendeskOAuthProxy" },
+    { id: "mcp",     label: "/mcp/dev",       sub: "FastMCP" },
+    { id: "tools",   label: "Tool handlers",  sub: "tickets.py · …" },
+    { id: "zclient", label: "ZendeskClient",  sub: "httpx singleton" },
+    { id: "cosmos",  label: "Cosmos DB",      sub: "oauth_state" },
+    { id: "zendesk", label: "Zendesk API",    sub: "hotschedules.zendesk.com" }
+  ];
+
+  const FLOWS = [
+    {
+      id: "oauth-zendesk",
+      title: "OAuth dance — first connect",
+      subtitle: "What happens the first time a user calls a tool via /mcp/dev. After this, the Bearer is persisted in Cosmos and reused for ~7 days.",
+      steps: [
+        { from: "client",  to: "mcp",     role: "mcp",      url: "POST /mcp/dev",
+          payload: "(no Authorization header)",
+          note: "Server 401s with WWW-Authenticate pointing at our OAuth proxy metadata." },
+        { from: "client",  to: "mcp",     role: "auth",     url: "GET /.well-known/oauth-authorization-server/mcp/dev",
+          payload: "—",
+          note: "Returns scopes=[read,write], authorize/token/registration endpoints." },
+        { from: "client",  to: "oauth",   role: "auth",     url: "POST /mcp/dev/register",
+          payload: "{ client_name, redirect_uris: [http://localhost:8888/callback] }",
+          note: "Dynamic Client Registration (DCR). ZendeskOAuthProxy persists the new client_id in Cosmos." },
+        { from: "client",  to: "oauth",   role: "auth",     url: "GET /mcp/dev/authorize?client_id=<dcr-id>&redirect_uri=…&scope=read+write&state=…",
+          payload: "PKCE challenge",
+          note: "Our proxy validates the DCR client." },
+        { from: "oauth",   to: "zendesk", role: "redirect", url: "302 https://hotschedules.zendesk.com/oauth/authorizations/new?client_id=mcp-server-copilot-prod&redirect_uri=…/mcp/dev/auth/callback",
+          payload: "Upstream client_id = Stefan's prod Zendesk OAuth client.",
+          note: "OAuthProxy translates the inbound DCR-style request into the upstream OAuth flow." },
+        { from: "user",    to: "zendesk", role: "auth",     url: "https://hotschedules.zendesk.com/access/normal",
+          payload: "User toggles 'Agent sign-in' and authenticates.",
+          note: "Users without a Zendesk agent password cannot proceed past this screen." },
+        { from: "zendesk", to: "oauth",   role: "callback", url: "GET /mcp/dev/auth/callback?code=<zendesk-auth-code>&state=…",
+          payload: "Single-use Zendesk authorization code",
+          note: "Comes back to our server, not to the MCP client." },
+        { from: "oauth",   to: "zendesk", role: "token",    url: "POST https://hotschedules.zendesk.com/oauth/tokens",
+          payload: "grant_type=authorization_code, code, client_id=mcp-server-copilot-prod, client_secret=<from-KV>",
+          note: "Returns the user's Zendesk Bearer token (opaque, not JWT)." },
+        { from: "oauth",   to: "cosmos",  role: "secret",   url: "Cosmos doc write — oauth_state container",
+          payload: "{ access_token: <fernet-encrypted Zendesk Bearer>, partition_key: <dcr-client-id> }",
+          note: "Persists across container restarts." },
+        { from: "oauth",   to: "client",  role: "callback", url: "302 http://localhost:8888/callback?code=<our-proxy-code>&state=…",
+          payload: "OAuthProxy's own auth code (distinct from Zendesk's).",
+          note: "Standard MCP OAuth callback contract." },
+        { from: "client",  to: "oauth",   role: "token",    url: "POST /mcp/dev/token",
+          payload: "grant_type=authorization_code, code, code_verifier",
+          note: "Returns MCP access token (effectively the Zendesk Bearer)." },
+        { from: "client",  to: "mcp",     role: "mcp",      url: "POST /mcp/dev (Authorization: Bearer <Zendesk-Bearer>)",
+          payload: "MCP initialize → list_tools",
+          note: "ZendeskTokenVerifier validates by hitting /api/v2/users/me (5-min cache)." }
+      ]
+    },
+    {
+      id: "create-it-ticket",
+      title: "create_it_ticket — end-to-end",
+      subtitle: "What happens when an authenticated user calls the IT-ticket tool. Verified on 2026-05-14 with ticket #6861982.",
+      steps: [
+        { from: "client",  to: "mcp",     role: "mcp",  url: "POST /mcp/dev — tools/call create_it_ticket",
+          payload: "{ subject, description, classification, sr_category, eit_general_subcategory, impact, location, priority }",
+          note: "Authorization: Bearer <user's Zendesk token> from the prior OAuth dance." },
+        { from: "mcp",     to: "tools",   role: "mcp",  url: "src/tools/tickets.py:create_it_ticket",
+          payload: "Validates classification × category × L3 × L4 consistency.",
+          note: "Heavy schema validation before any Zendesk call. Raises ValueError on mismatch." },
+        { from: "tools",   to: "tools",   role: "config", url: "src/tools/tickets.py:_build_it_custom_fields()",
+          payload: "21 custom fields with prod IT form field IDs.",
+          note: "IT_FORM_CONFIG['dev']=IT_FORM_CONFIG['prod'] override (server.py:847). Without it: sandbox brand_id → 422 'Brand is invalid'." },
+        { from: "tools",   to: "zclient", role: "rest", url: "zendesk_client.create_ticket(ticket_data)",
+          payload: "form_id=45108529620365, brand_id=360004744852, custom_fields=[21]",
+          note: "T3 gate: NO requester/comment.author_id injection under Arch C. Zendesk attributes natively." },
+        { from: "zclient", to: "zendesk", role: "rest", url: "POST https://hotschedules.zendesk.com/api/v2/tickets.json",
+          payload: "Authorization: Bearer <user's Zendesk token>",
+          note: "Zendesk receives a properly-authenticated agent request and creates the ticket." },
+        { from: "zendesk", to: "zclient", role: "rest", url: "201 Created — ticket payload",
+          payload: "{ ticket: { id: 6861982, requester_id: 32385645314957, … } }",
+          note: "requester_id is the authenticated user — proving end-to-end per-user attribution." },
+        { from: "zclient", to: "tools",   role: "mcp",  url: "(return)",
+          payload: "id, url, subject, form, created_at",
+          note: "Tool builds a compact JSON summary." },
+        { from: "tools",   to: "client",  role: "mcp",  url: "MCP response over Streamable HTTP",
+          payload: "Display string with markdown summary.",
+          note: "User sees ticket ID + URL in Claude Code / Copilot Studio." }
+      ]
+    },
+    {
+      id: "list-tickets",
+      title: "list_tickets — read scoped by user",
+      subtitle: "How a read tool works under Arch C. The user's own Zendesk Bearer is forwarded; Zendesk applies role-based visibility.",
+      steps: [
+        { from: "client",  to: "mcp",     role: "mcp",  url: "POST /mcp/dev — tools/call list_tickets",
+          payload: "{ per_page: 25 }",
+          note: "Authorization: Bearer <user's Zendesk token>." },
+        { from: "mcp",     to: "tools",   role: "mcp",  url: "src/tools/tickets.py:list_tickets",
+          payload: "—",
+          note: "No attribution helpers fire on read paths." },
+        { from: "tools",   to: "zclient", role: "rest", url: "zendesk_client.list_tickets({page, per_page})",
+          payload: "Forward the user's Bearer verbatim.",
+          note: "zendesk_client.py:223 reads Authorization from contextvar." },
+        { from: "zclient", to: "zendesk", role: "rest", url: "GET /api/v2/tickets.json (Authorization: Bearer <user's Zendesk token>)",
+          payload: "—",
+          note: "Zendesk role applies — agent sees their queue; end-user sees only their own requests; admin sees all." },
+        { from: "zendesk", to: "zclient", role: "rest", url: "200 OK — scope-filtered ticket list",
+          payload: "{ count, next_page, tickets: [...] }",
+          note: "Zendesk enforces scope server-side. No privilege escalation." },
+        { from: "zclient", to: "client",  role: "mcp",  url: "MCP response",
+          payload: "Compact JSON.",
+          note: "Returned to the user's Claude Code session." }
+      ]
+    }
+  ];
+
+  const ROLE_COLORS = {
+    auth:     "#c79bff",
+    callback: "#9be8c0",
+    token:    "#d8f29b",
+    rest:     "#9ec6ff",
+    mcp:      "#ffc69e",
+    secret:   "#ff9ed8",
+    blob:     "#9eecff",
+    config:   "#dddddd",
+    redirect: "#ffd9a8"
+  };
+  const ROLE_DESC = {
+    auth:     "auth provider request",
+    callback: "OAuth return URL",
+    token:    "code → token exchange",
+    rest:     "Zendesk REST API",
+    mcp:      "MCP wire (Streamable HTTP)",
+    secret:   "Key Vault / Cosmos read",
+    blob:     "Azure blob read",
+    config:   "in-process / config",
+    redirect: "302 to upstream"
+  };
+
+  // ============================================================================
+  // LEGEND
+  // ============================================================================
+  const legendEl = document.getElementById("legend");
+  for (const role of Object.keys(ROLE_DESC)) {
+    const pill = document.createElement("span");
+    pill.className = `role-pill role-${role}`;
+    pill.textContent = role;
+    const wrap = document.createElement("span");
+    wrap.appendChild(pill);
+    wrap.appendChild(document.createTextNode(" " + ROLE_DESC[role]));
+    legendEl.appendChild(wrap);
+  }
+
+  // ============================================================================
+  // TABS
+  // ============================================================================
+  const tabsEl = document.getElementById("tabs");
+  let activeFlowId = null;
+  let activeStepIdx = null;
+
+  for (const f of FLOWS) {
+    const tab = document.createElement("div");
+    tab.className = "tab";
+    tab.textContent = f.title;
+    tab.dataset.id = f.id;
+    tab.addEventListener("click", () => selectFlow(f.id));
+    tabsEl.appendChild(tab);
+  }
+
+  // ============================================================================
+  // DIAGRAM RENDER (vertical sequence)
+  // ============================================================================
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const svg = document.getElementById("diagram");
+  const detail = document.getElementById("detail");
+
+  const ACTOR_W = 160, ACTOR_H = 50, ACTOR_GAP = 30;
+  const ACTOR_X_PAD = 80;  // left padding for step-number column
+  const STEP_H = 56;
+  const STEP_Y0 = ACTOR_H + 30;
+  const STEP_NUM_X = 32;
+
+  function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
+  function svgEl(name, attrs, children) {
+    const e = document.createElementNS(SVG_NS, name);
+    if (attrs) for (const [k, v] of Object.entries(attrs)) {
+      if (k === "text") e.textContent = v;
+      else e.setAttribute(k, v);
+    }
+    if (children) for (const c of children) if (c) e.appendChild(c);
+    return e;
+  }
+
+  function renderFlow(flow) {
+    clear(svg);
+    clear(detail);
+
+    // Compute which actors participate (keep them in their declared order)
+    const usedActorIds = new Set();
+    for (const s of flow.steps) { usedActorIds.add(s.from); usedActorIds.add(s.to); }
+    const actors = ACTORS.filter(a => usedActorIds.has(a.id));
+
+    const width = ACTOR_X_PAD * 2 + actors.length * ACTOR_W + (actors.length - 1) * ACTOR_GAP;
+    const height = STEP_Y0 + flow.steps.length * STEP_H + 40;
+    svg.setAttribute("width", width);
+    svg.setAttribute("height", height);
+    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+
+    // Build actor x-positions
+    const actorX = {};
+    actors.forEach((a, i) => {
+      actorX[a.id] = ACTOR_X_PAD + i * (ACTOR_W + ACTOR_GAP) + ACTOR_W / 2;
+    });
+
+    // Draw actor boxes (top)
+    for (const a of actors) {
+      const x = actorX[a.id];
+      const g = svgEl("g", { class: "actor", transform: `translate(${x - ACTOR_W / 2}, 6)` });
+      g.appendChild(svgEl("rect", { width: ACTOR_W, height: ACTOR_H, rx: 8, ry: 8 }));
+      g.appendChild(svgEl("text", { x: ACTOR_W / 2, y: 22, text: a.label }));
+      g.appendChild(svgEl("text", { x: ACTOR_W / 2, y: 38, class: "sub", text: a.sub }));
+      svg.appendChild(g);
+    }
+
+    // Draw lifelines (vertical dashed)
+    for (const a of actors) {
+      const x = actorX[a.id];
+      svg.appendChild(svgEl("line", {
+        x1: x, y1: ACTOR_H + 6, x2: x, y2: height - 20, class: "lane"
+      }));
+    }
+
+    // Draw steps
+    flow.steps.forEach((step, idx) => {
+      const y = STEP_Y0 + idx * STEP_H + STEP_H / 2;
+      const x1 = actorX[step.from];
+      const x2 = actorX[step.to];
+      const color = ROLE_COLORS[step.role] || "#888";
+      const isSelf = step.from === step.to;
+
+      // Step row (clickable background — full width)
+      const row = svgEl("rect", {
+        x: 4, y: y - STEP_H / 2 + 3, width: width - 8, height: STEP_H - 6,
+        rx: 6, class: "step-row", "data-step": idx
+      });
+      row.addEventListener("click", () => focusStep(idx));
+      svg.appendChild(row);
+
+      // Step number circle (left margin)
+      svg.appendChild(svgEl("circle", {
+        cx: STEP_NUM_X, cy: y, r: 13, class: "step-num", "data-step": idx
+      }));
+      svg.appendChild(svgEl("text", {
+        x: STEP_NUM_X, y: y + 4, class: "step-num-text", "data-step": idx, text: String(idx + 1)
+      }));
+
+      // Arrow
+      if (isSelf) {
+        // Loop on the same lane: small semicircle to the right
+        const r = 14;
+        const path = `M ${x1} ${y - 6} q ${r * 2} 0 ${r * 2} ${r} q 0 ${r} -${r * 2} ${r} l 0 -2`;
+        svg.appendChild(svgEl("path", {
+          d: `M ${x1 + 1} ${y - 8} q 22 -2 22 10 q 0 12 -22 10`,
+          class: "arrow", stroke: color, "data-step": idx, fill: "none"
+        }));
+        // arrow tip
+        svg.appendChild(svgEl("path", {
+          d: `M ${x1 + 1} ${y + 12} l 6 -3 l -1 7 z`,
+          class: "arrow-head", fill: color, "data-step": idx
+        }));
+      } else {
+        // Straight horizontal arrow
+        const dir = x2 > x1 ? 1 : -1;
+        const startX = x1 + dir * 4;
+        const endX = x2 - dir * 8;
+        svg.appendChild(svgEl("line", {
+          x1: startX, y1: y, x2: endX, y2: y,
+          class: "arrow", stroke: color, "data-step": idx
+        }));
+        // arrow tip
+        const tip = `M ${endX} ${y} l ${-dir * 8} -5 l 0 10 z`;
+        svg.appendChild(svgEl("path", {
+          d: tip, class: "arrow-head", fill: color, "data-step": idx
+        }));
+      }
+
+      // Label above the arrow (or to the right for self-loop)
+      const midX = isSelf ? x1 + 28 : (x1 + x2) / 2;
+      const labelY = isSelf ? y + 4 : y - 8;
+      const labelText = `${step.role}: ${step.url.length > 70 ? step.url.slice(0, 70) + "…" : step.url}`;
+      svg.appendChild(svgEl("text", {
+        x: midX, y: labelY, "text-anchor": isSelf ? "start" : "middle",
+        class: "arrow-label", "data-step": idx, text: labelText
+      }));
+    });
+
+    // Step detail panels (collapsed by default — show one at a time when focused)
+    detail.appendChild(buildHeader(flow));
+  }
+
+  function buildHeader(flow) {
+    const wrap = document.createElement("div");
+    wrap.style.maxWidth = "1100px";
+    wrap.style.padding = "12px 0 6px";
+    const h = document.createElement("h2");
+    h.style.margin = "0 0 4px";
+    h.style.fontSize = "15px";
+    h.textContent = flow.title;
+    const p = document.createElement("p");
+    p.style.margin = "0";
+    p.style.color = "var(--muted)";
+    p.style.fontSize = "13px";
+    p.textContent = flow.subtitle;
+    const help = document.createElement("p");
+    help.style.margin = "10px 0 0";
+    help.style.color = "var(--muted)";
+    help.style.fontSize = "12px";
+    help.style.fontStyle = "italic";
+    help.textContent = "Click any numbered row above to focus a single step and read its payload + notes here.";
+    wrap.appendChild(h);
+    wrap.appendChild(p);
+    wrap.appendChild(help);
+    return wrap;
+  }
+
+  function buildStepDetail(flow, idx) {
+    const step = flow.steps[idx];
+    const fromA = ACTORS.find(a => a.id === step.from) || { label: step.from };
+    const toA = ACTORS.find(a => a.id === step.to) || { label: step.to };
+
+    const box = document.createElement("div");
+    box.className = "step-detail-box";
+
+    const head = document.createElement("div");
+    head.className = "head";
+    const num = document.createElement("span");
+    num.className = "num";
+    num.textContent = String(idx + 1);
+    head.appendChild(num);
+
+    const actors = document.createElement("span");
+    actors.className = "actors";
+    actors.appendChild(document.createTextNode(fromA.label));
+    const arr = document.createElement("span");
+    arr.className = "arr";
+    arr.textContent = "→";
+    actors.appendChild(arr);
+    actors.appendChild(document.createTextNode(toA.label));
+    head.appendChild(actors);
+
+    const pill = document.createElement("span");
+    pill.className = `role-pill role-${step.role}`;
+    pill.textContent = step.role;
+    head.appendChild(pill);
+
+    box.appendChild(head);
+
+    const url = document.createElement("div");
+    url.className = "url";
+    url.textContent = step.url;
+    box.appendChild(url);
+
+    if (step.payload && step.payload !== "—") {
+      const pl = document.createElement("div");
+      pl.className = "payload";
+      pl.textContent = step.payload;
+      box.appendChild(pl);
+    }
+    if (step.note) {
+      const n = document.createElement("div");
+      n.className = "note";
+      n.textContent = step.note;
+      box.appendChild(n);
+    }
+    return box;
+  }
+
+  function focusStep(idx) {
+    activeStepIdx = (activeStepIdx === idx) ? null : idx;
+    const flow = FLOWS.find(f => f.id === activeFlowId);
+
+    // Update SVG classes
+    svg.querySelectorAll("[data-step]").forEach(el => {
+      const i = parseInt(el.dataset.step, 10);
+      const isActive = i === activeStepIdx;
+      if (el.classList.contains("step-row")) el.classList.toggle("active", isActive);
+      if (el.classList.contains("step-num")) el.classList.toggle("active", isActive);
+    });
+
+    // Update detail panel
+    clear(detail);
+    detail.appendChild(buildHeader(flow));
+    if (activeStepIdx !== null) {
+      detail.appendChild(buildStepDetail(flow, activeStepIdx));
+    }
+  }
+
+  function selectFlow(id) {
+    activeFlowId = id;
+    activeStepIdx = null;
+    [...tabsEl.children].forEach(t => t.classList.toggle("active", t.dataset.id === id));
+    const flow = FLOWS.find(f => f.id === id);
+    if (flow) renderFlow(flow);
+    location.hash = id;
+  }
+
+  // ============================================================================
+  // BOOT
+  // ============================================================================
+  function bootHash() {
+    const id = location.hash.replace(/^#/, "");
+    selectFlow((id && FLOWS.some(f => f.id === id)) ? id : FLOWS[0].id);
+  }
+  window.addEventListener("hashchange", bootHash);
+  bootHash();
+  </script>
+</body>
+</html>

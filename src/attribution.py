@@ -1,8 +1,16 @@
 """Pure helpers that inject per-user attribution into Zendesk write payloads.
 
-Architecture F (v3.10.0+): all Zendesk API calls authenticate as the service
-account; per-user attribution is recorded by setting `requester_id` /
-`author_id` fields in the JSON body. See ADR-015.
+These functions exist for **Architecture F** (`MCP_AUTH_MODE=entra`), where
+all Zendesk API calls authenticate as the service account and per-user
+attribution must be recorded by setting `requester_id` / `author_id` fields
+in the JSON body. See ADR-015.
+
+**Bypassed under Architecture C** (`MCP_AUTH_MODE=zendesk`, current live
+mode as of 2026-05-14): the Zendesk OAuth caller IS the user, so Zendesk
+attributes the request natively. Call sites in `src/tools/tickets.py`,
+`src/tools/help_center.py`, and `src/tools/release_notes.py` gate these
+helpers behind an `MCP_AUTH_MODE == "entra"` check; under Arch C they
+silently no-op. See `docs/DESIGN_DECISIONS.md` section B7.
 
 These functions mutate the incoming dict in place and return None — callers
 build the payload first, then inject. User-provided explicit `requester_id`
@@ -72,12 +80,17 @@ def apply_article_attribution(payload: dict, user_id: int) -> None:
 
 def get_current_entra_email() -> str | None:
     """Pull the authenticated Entra user's email from the FastMCP access-token
-    context. Returns None when not in an auth context (stdio mode, prod path,
-    or test fixtures without ContextVar wiring).
+    context. Returns None when not in an auth context: stdio mode, the /mcp/prod
+    Architecture-B path, the /mcp/dev Architecture-C path
+    (`MCP_AUTH_MODE=zendesk` — claims come from `ZendeskTokenVerifier` which
+    populates `email` directly, not `preferred_username`/`upn`), or test
+    fixtures without ContextVar wiring.
 
     Precedence matches src/entra_auth.py:get_user_email — `preferred_username`
     is the canonical Entra v2 claim for sign-in name. Falls through to `upn`
     (Windows-style UPN) and `email` (some external IdP federations).
+    Architecture C callers do not invoke this function directly; the
+    attribution call sites gate on `MCP_AUTH_MODE` before reaching here.
     """
     try:
         from fastmcp.server.dependencies import get_access_token

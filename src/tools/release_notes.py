@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from typing import cast
 
@@ -161,7 +162,16 @@ async def create_release_note(  # pylint: disable=too-many-locals
     markdown_content: str,
     use_us_template: bool = False,
 ) -> str:
-    """Parse release note markdown and publish it as a draft Help Center article."""
+    """Parse release note markdown and publish it as a draft Help Center article.
+
+    Under Architecture F (`MCP_AUTH_MODE=entra`), the hardcoded
+    `env_config["author_id"]` (the configured release-notes bot account)
+    is set as the article author. Under Architecture C
+    (`MCP_AUTH_MODE=zendesk`, current live), the hardcoded override is
+    skipped — the Zendesk OAuth caller becomes the author natively. Setting
+    a different author_id under per-user OAuth can 422 if the user lacks
+    `set_author_on_create` permission.
+    """
     release_data = parse_markdown_content(markdown_content)
 
     feature_names = [
@@ -202,8 +212,16 @@ async def create_release_note(  # pylint: disable=too-many-locals
         "draft": True,
         "permission_group_id": env_config["permission_group_id"],
         "user_segment_id": env_config["user_segment_id"],
-        "author_id": env_config["author_id"],
     }
+    # Under Architecture F (entra, default), force the configured release-notes
+    # author so the article is attributed to the bot account regardless of
+    # which Entra user invoked the tool. Under Architecture C
+    # (MCP_AUTH_MODE=zendesk), the Zendesk OAuth caller is the user; skip the
+    # hardcoded override so Zendesk attributes the article to them natively.
+    # Setting author_id to a different user under per-user OAuth can 422 if
+    # the user lacks "set author on create" permission.
+    if os.environ.get("MCP_AUTH_MODE", "entra").lower() == "entra":
+        article_data["author_id"] = env_config["author_id"]
 
     result = await zendesk_client.create_article(
         article_data, cast(int, env_config["section_id"])

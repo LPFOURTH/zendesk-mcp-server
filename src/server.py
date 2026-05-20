@@ -767,9 +767,18 @@ def _create_dev_server_entra() -> FastMCP:
     # validated-users". Route Zendesk REST calls to the prod subdomain
     # (override the sandbox default in constants.ENVIRONMENTS["dev"]).
     # Configurable via ZENDESK_PROD_SUBDOMAIN; default matches our prod tenant.
-    from .constants import ENVIRONMENTS
+    from .constants import ENVIRONMENTS, IT_FORM_CONFIG
     prod_subdomain = os.environ.get("ZENDESK_PROD_SUBDOMAIN", "hotschedules")
     ENVIRONMENTS["dev"]["base_url"] = f"https://{prod_subdomain}.zendesk.com"
+    # Per Boyan's PR #1 design: IT_FORM_CONFIG keys match the actual Zendesk
+    # target. Under Architecture F, /mcp/dev IS prod Zendesk, so create_it_ticket
+    # on /mcp/dev must use the prod form_id, brand_id (Fourth IT Help =
+    # 360004744852), and field IDs. Without this override the dev config would
+    # send sandbox brand_id 40387882303501 to prod Zendesk → 422 "Brand is invalid".
+    # Under MCP_AUTH_MODE=zendesk (revert path, _create_dev_server_zendesk_oauth),
+    # /mcp/dev returns to sandbox Zendesk and the original IT_FORM_CONFIG["dev"]
+    # sandbox values stay correct — no override there.
+    IT_FORM_CONFIG["dev"] = IT_FORM_CONFIG["prod"]
 
     client_storage = _build_cosmos_client_storage()
 
@@ -801,17 +810,22 @@ def _create_dev_server_entra() -> FastMCP:
 
 
 def _create_dev_server_zendesk_oauth() -> FastMCP:
-    """Architecture C — Zendesk-OAuth-via-OAuthProxy (legacy, kept for revert).
+    """Architecture C — per-user Zendesk OAuth via ZendeskOAuthProxy.
 
-    Each user authenticates directly with Zendesk. The MCP server uses their
-    personal Zendesk OAuth token for all API calls. No service account.
+    Triggered by `MCP_AUTH_MODE=zendesk`. **Current live mode** as of
+    2026-05-14 (revision --0000111). Each user authenticates directly with
+    Zendesk through a browser OAuth flow; the user's own Zendesk Bearer is
+    forwarded on every downstream API call. No service-account credential on
+    the request path — Zendesk-side role-based access controls apply per
+    token.
 
-    Triggered by setting `MCP_AUTH_MODE=zendesk` on the dev server. This is the
-    pre-Architecture-F auth flow, retained as an env-flag revert path in case
-    Architecture F has an incident in prod. See ADR-015.
+    See ADR-011 for the prod-Zendesk-pointer decision, ADR-015 for the
+    historical comparison with Architecture F, and `docs/DESIGN_DECISIONS.md`
+    section B3 for the full rationale.
 
     Multi-env config: MCP_DEV_ENVIRONMENT selects which set of
-    ZENDESK_<NAME>_* env vars to read (default: SANDBOX1).
+    ZENDESK_<NAME>_* env vars to read (default: SANDBOX1). Currently PROD
+    in production — see ADR-011 and `docs/LIMITATIONS.md` RISK-001.
     """
     from .zendesk_token_verifier import ZendeskOAuthProxy, ZendeskTokenVerifier
 
@@ -829,8 +843,17 @@ def _create_dev_server_zendesk_oauth() -> FastMCP:
         )
         return _create_base_server(name_suffix=" (dev)")
 
-    from .constants import ENVIRONMENTS
+    from .constants import ENVIRONMENTS, IT_FORM_CONFIG
     ENVIRONMENTS["dev"]["base_url"] = f"https://{subdomain}.zendesk.com"
+
+    # When MCP_DEV_ENVIRONMENT=PROD under Architecture C, /mcp/dev points at the
+    # prod Zendesk tenant via per-user OAuth. The IT_FORM_CONFIG["dev"] sandbox
+    # form/brand/field IDs would 422 against prod ("Brand is invalid"), so swap
+    # in the prod values — same override Architecture F applies in the Entra
+    # branch (_create_dev_server_entra). For SANDBOX1/other dev envs the
+    # sandbox defaults stay correct.
+    if env_name == "PROD":
+        IT_FORM_CONFIG["dev"] = IT_FORM_CONFIG["prod"]
 
     token_verifier = ZendeskTokenVerifier(zendesk_subdomain=subdomain)
     client_storage = _build_cosmos_client_storage()
@@ -845,26 +868,37 @@ def _create_dev_server_zendesk_oauth() -> FastMCP:
         token_endpoint_auth_method="client_secret_post",
         valid_scopes=["read", "write"],
         require_authorization_consent=False,
-        jwt_signing_key=os.environ.get("MCP_JWT_SIGNING_KEY", ""),
+        # Pass None (not empty string) so FastMCP derives a 32-byte key
+        # at boot. Empty string is rejected by some FastMCP versions. Matches
+        # the Entra branch's handling at _create_dev_server_entra.
+        jwt_signing_key=os.environ.get("MCP_JWT_SIGNING_KEY") or None,
     )
     if client_storage is not None:
         auth_kwargs["client_storage"] = client_storage
 
     auth = ZendeskOAuthProxy(**auth_kwargs)
     print(
-        f"[zendesk-mcp] Dev server: Zendesk OAuth ({env_name}) "
-        f"— subdomain {subdomain} (LEGACY MODE — MCP_AUTH_MODE=zendesk)",
+        f"[zendesk-mcp] Dev server: Architecture C ({env_name}) "
+        f"— per-user Zendesk OAuth, subdomain {subdomain} (MCP_AUTH_MODE=zendesk)",
         file=sys.stderr,
     )
     return _create_base_server(name_suffix=" (dev)", auth=auth)
 
 
 def create_dev_server() -> FastMCP:
-    """Dispatch to Entra (Architecture F, default) or Zendesk-OAuth (legacy
-    revert path) based on `MCP_AUTH_MODE` env var.
+    """Dispatch /mcp/dev to one of two auth architectures based on
+    `MCP_AUTH_MODE`. Both paths are fully wired; the dispatch is the only
+    runtime difference.
 
-    - `MCP_AUTH_MODE=entra` (default since v3.10.0): _create_dev_server_entra
-    - `MCP_AUTH_MODE=zendesk`: _create_dev_server_zendesk_oauth (revert path)
+    - `MCP_AUTH_MODE=zendesk` → `_create_dev_server_zendesk_oauth`
+      (Architecture C, per-user Zendesk OAuth). **Current live mode**.
+    - `MCP_AUTH_MODE=entra` → `_create_dev_server_entra`
+      (Architecture F, Entra OAuth + service-account Zendesk).
+    - Unset → defaults to `entra` (regression guard against accidentally
+      dropping auth in prod).
+
+    Flipping this env var is the documented L1 revert (~30s, no redeploy).
+    See `docs/DESIGN_DECISIONS.md` section B2 and `docs/LIMITATIONS.md`.
     """
     mode = os.environ.get("MCP_AUTH_MODE", "entra").lower()
     if mode == "zendesk":

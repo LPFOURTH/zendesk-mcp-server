@@ -207,12 +207,17 @@ async def create_ticket(  # pylint: disable=too-many-arguments,too-many-position
         ticket_data["priority"] = priority
     if status is not None:
         ticket_data["status"] = status
-    user_email = _get_authenticated_user_email()
-    if user_email:
-        # Architecture F: authenticated Entra user is ALWAYS the requester.
-        # No caller-side override. Zendesk auto-creates the user from email
-        # if not already present. See ADR-015.
-        ticket_data["requester"] = {"email": user_email}
+    # Architecture F attribution path. Skip under MCP_AUTH_MODE=zendesk
+    # (Architecture C revert): the per-user Zendesk OAuth caller IS the user,
+    # so Zendesk attributes correctly natively without server-side injection.
+    user_email: str | None = None
+    if os.environ.get("MCP_AUTH_MODE", "entra").lower() == "entra":
+        user_email = _get_authenticated_user_email()
+        if user_email:
+            # Architecture F: authenticated Entra user is ALWAYS the requester.
+            # No caller-side override. Zendesk auto-creates the user from email
+            # if not already present. See ADR-015.
+            ticket_data["requester"] = {"email": user_email}
     if assignee_id is not None:
         ticket_data["assignee_id"] = assignee_id
     if group_id is not None:
@@ -224,7 +229,8 @@ async def create_ticket(  # pylint: disable=too-many-arguments,too-many-position
 
     # comment.author_id is set to the authenticated user when resolvable.
     # Under v3.10.2 there's no separate "requester vs author" branching —
-    # both are the authenticated user, always.
+    # both are the authenticated user, always. (Arch C path: user_email
+    # stays None per the gate above; this block is a no-op.)
     if user_email:
         author_user_id = await resolve_zendesk_user_id(user_email)
         if author_user_id:
@@ -295,7 +301,9 @@ async def update_ticket(  # pylint: disable=too-many-arguments,too-many-position
 
     # When adding a comment to an existing ticket, attribute it to the
     # authenticated user via comment.author_id. See ADR-015 (Architecture F).
-    if comment is not None:
+    # Skip under MCP_AUTH_MODE=zendesk (Architecture C): the Zendesk OAuth
+    # caller is the comment author natively, no server-side override needed.
+    if comment is not None and os.environ.get("MCP_AUTH_MODE", "entra").lower() == "entra":
         user_email = _get_authenticated_user_email()
         if user_email:
             author_user_id = await resolve_zendesk_user_id(user_email)
@@ -862,7 +870,19 @@ async def create_it_ticket(  # pylint: disable=too-many-arguments,too-many-posit
     additional_location_info: str | None = None,
     priority: Literal["low", "normal", "high", "urgent"] | None = None,
 ) -> str:
-    """Create an IT Support Request ticket using the company's standard form."""
+    """Create an IT Support Request ticket using the company's standard IT form.
+
+    **Active write path** as of v3.10.3 — supersedes the deprecated
+    `create_ticket`. Targets the prod IT form (`45108529620365`) on
+    `hotschedules.zendesk.com` brand `360004744852`. Validates classification
+    × category × L3 × L4 consistency before any Zendesk call.
+
+    Attribution under Architecture C (`MCP_AUTH_MODE=zendesk`, current live):
+    no server-side requester / comment.author_id injection — the Zendesk OAuth
+    caller IS the user. Under Architecture F (`MCP_AUTH_MODE=entra`), the
+    authenticated Entra user is injected as `requester` + `comment.author_id`.
+    Gate at line 1058.
+    """
     # Resolve environment config.
     # Priority: HTTP contextvar (zendesk-environment header / path routing) → ZENDESK_ENVIRONMENT env var → "dev".
     env = zendesk_environment_var.get() or os.environ.get("ZENDESK_ENVIRONMENT") or "dev"
@@ -1042,15 +1062,21 @@ async def create_it_ticket(  # pylint: disable=too-many-arguments,too-many-posit
     # Architecture F attribution: requester from the Entra email (Zendesk
     # auto-creates the user if needed), comment.author_id from the resolved
     # Zendesk user_id. See ADR-015.
-    user_email = _get_authenticated_user_email()
-    if user_email:
-        ticket_data.setdefault("requester", {"email": user_email})
-        author_user_id = await resolve_zendesk_user_id(user_email)
-        if author_user_id:
-            apply_ticket_attribution(
-                ticket_data, author_user_id,
-                set_requester=False, set_comment_author=True,
-            )
+    #
+    # Skip entirely under Architecture C (MCP_AUTH_MODE=zendesk): the Zendesk
+    # OAuth caller IS the user, so Zendesk attributes correctly natively.
+    # Injecting requester/comment.author_id on top is redundant and can 422
+    # if the user lacks set_author_on_create permission.
+    if os.environ.get("MCP_AUTH_MODE", "entra").lower() == "entra":
+        user_email = _get_authenticated_user_email()
+        if user_email:
+            ticket_data.setdefault("requester", {"email": user_email})
+            author_user_id = await resolve_zendesk_user_id(user_email)
+            if author_user_id:
+                apply_ticket_attribution(
+                    ticket_data, author_user_id,
+                    set_requester=False, set_comment_author=True,
+                )
 
     result = await zendesk_client.create_ticket(ticket_data)
     t = result.get("ticket") or result
