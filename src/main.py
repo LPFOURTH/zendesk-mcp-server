@@ -100,6 +100,22 @@ def _run_http() -> None:
     uvicorn.run(app, host=host, port=port, log_level="warning")
 
 
+def _strip_caller_environment_headers(headers: dict) -> dict:
+    """Remove any caller-controlled environment-routing headers from `headers`.
+
+    AUDIT-009 fix: `extract_request_context` reads from both
+    `x-zendesk-environment` and `zendesk-environment`. The routing
+    middleware injects its own canonical `zendesk-environment` after this
+    strip, so a caller-supplied value can no longer leak into the request
+    context and re-route to the other Zendesk tenant.
+
+    Returns the same dict (mutated in place) for caller convenience.
+    """
+    headers.pop("zendesk-environment", None)
+    headers.pop("x-zendesk-environment", None)
+    return headers
+
+
 def _make_routing_middleware(parent_app, prod_app, dev_app):
     """ASGI middleware that routes /mcp/prod and /mcp/dev to separate FastMCP
     apps, strips the prefix, injects environment contextvars, and adds CORS.
@@ -199,8 +215,13 @@ def _make_routing_middleware(parent_app, prod_app, dev_app):
 
                 inner_scope = {**scope, "path": inner_path, "root_path": scope.get("root_path", "") + prefix, "headers": raw_headers}
 
-                # Inject zendesk-environment header for request context
+                # Build the headers dict used to derive request-context vars.
+                # AUDIT-009: strip any caller-controlled environment headers
+                # BEFORE injecting our path-derived env_name, so an attacker
+                # can't set X-Zendesk-Environment: prod to route /mcp/dev calls
+                # against the prod Zendesk tenant.
                 headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
+                _strip_caller_environment_headers(headers)
                 headers["zendesk-environment"] = env_name
                 ctx = extract_request_context(headers)
                 # Don't pass raw MCP Bearer token to ZendeskClient as-is.
