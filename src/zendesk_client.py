@@ -105,6 +105,35 @@ def resolve_zendesk_target(
     return {"origin": None, "subdomain": None}
 
 
+_GENERIC_ZENDESK_ERROR_MESSAGES = {
+    400: "bad request",
+    401: "authentication failed",
+    403: "permission denied",
+    404: "resource not found",
+    409: "conflict",
+    422: "validation failed",
+    429: "rate limited",
+    500: "upstream server error",
+    502: "upstream gateway error",
+    503: "upstream unavailable",
+    504: "upstream timeout",
+}
+
+
+def _sanitized_zendesk_error(status: int) -> str:
+    """Generic, schema-safe error message for the MCP caller.
+
+    AUDIT-006 fix: Zendesk's raw error body can include internal field IDs,
+    custom-field metadata, allowed-value lists, and partial record data. A
+    clever caller can probe our Zendesk schema by submitting bad requests
+    and reading the errors. Only the HTTP status and a generic mapping are
+    safe to return. Full body is logged to stderr at the call site for
+    ops/forensics use.
+    """
+    generic = _GENERIC_ZENDESK_ERROR_MESSAGES.get(status, "request failed")
+    return f"Zendesk API Error: {status} ({generic}). See server logs for details."
+
+
 class RateLimiter:  # pylint: disable=too-few-public-methods
     """Sliding-window rate limiter that enforces a max requests-per-minute cap."""
 
@@ -295,18 +324,17 @@ class ZendeskClient:
                 body = exc.response.json()
             except ValueError:
                 body = {"error": exc.response.text}
+            # Log full body server-side for ops/forensics — fine, stays in
+            # Container App stderr → Log Analytics.
             print(
                 f"[zendesk-client] API error: {status} on {method} {endpoint} - "
                 f"body: {body}",
                 file=sys.stderr,
             )
-            error_type = body.get("error", "Request failed")
-            description = body.get("description", "")
-            details = body.get("details")
-            detail_msg = f" Details: {details}" if details else ""
-            raise RuntimeError(
-                f"Zendesk API Error: {status} - {error_type}. {description}{detail_msg}"
-            ) from exc
+            # AUDIT-006: don't surface Zendesk's raw body (field IDs,
+            # custom-field metadata, allowed-value enumerations) to the
+            # MCP caller. Generic message only; status code preserved.
+            raise RuntimeError(_sanitized_zendesk_error(status)) from exc
         except httpx.TimeoutException as exc:
             raise RuntimeError("Zendesk API request timed out after 30s") from exc
         except httpx.RequestError as exc:
@@ -368,11 +396,8 @@ class ZendeskClient:
                 f"body: {body}",
                 file=sys.stderr,
             )
-            error_type = body.get("error", "Upload failed")
-            description = body.get("description", "")
-            raise RuntimeError(
-                f"Zendesk API Error: {status} - {error_type}. {description}"
-            ) from exc
+            # AUDIT-006: see request() above — sanitize before surfacing.
+            raise RuntimeError(_sanitized_zendesk_error(status)) from exc
         except httpx.TimeoutException as exc:
             raise RuntimeError("Zendesk upload request timed out after 30s") from exc
         except httpx.RequestError as exc:
