@@ -49,7 +49,7 @@ No anonymous access. Token state persists in Cosmos DB (Fernet-encrypted) so dep
 | 3 | **No impersonation** | User A acting as user B | Per-request auth contextvar reset; caller-controlled headers stripped before routing; Zendesk's own RBAC is the source of truth per token | A single bug here = one user can read/write under another user's permissions. Catastrophic for trust. | ⚠️ Partial (one bug scheduled PR #4) |
 | 4 | **Brake pedal** | Accidental or malicious Zendesk hammering | Per-user sliding window rate limit (reads 1000/hr, writes alert@20 / block@30), output result caps, Zendesk 429 retry handling | An LLM in a loop can issue thousands of calls in seconds. Without limits we DoS Zendesk for the whole company. | ❌ Gap (scheduled PR #5) |
 | 5 | **Filter in / filter out** | Tricked into doing something stupid (SSRF, prompt injection, schema leakage) | URL deny-list on outbound fetches (no IMDS / RFC1918 / loopback); Pydantic length caps on free text; Zendesk error bodies sanitized; untrusted Zendesk content wrapped with `<untrusted-content>` markers | Today a single ticket attachment URL could exfil our Azure managed-identity token. CRITICAL gap. | ❌ Gap incl. CRITICAL SSRF (scheduled PR #4) |
-| 6 | **Locks on the building** | Infrastructure / supply chain weaknesses | ACR pull via Managed Identity (no shared password); KV purge protection; Defender for Containers + KV; monthly base-image rebuild; Entra secret expiry alert; 10-sec killswitch script | App code can be perfect and you can still get breached via container image CVEs, secret expiry, or admin-account compromise | ⚠️ Partial (killswitch ✓ but uncommitted; rest scheduled PR #5) |
+| 6 | **Locks on the building** | Infrastructure / supply chain weaknesses | ACR pull via Managed Identity (no shared password); KV purge protection + soft-delete 90d; Defender for Containers + KV; monthly base-image rebuild; Entra secret expiry alert; 10-sec killswitch script | App code can be perfect and you can still get breached via container image CVEs, secret expiry, or admin-account compromise | ⚠️ Partial (killswitch ✓ uncommitted, KV purge protection ✓ enabled, KV soft-delete 90d ✓; rest scheduled PR #5) |
 
 Mapped to: OWASP ASVS Level 1 + OWASP API Security Top 10 (2023) + MCP spec § Authorization + CIS Microsoft Azure Foundations.
 
@@ -144,7 +144,7 @@ Latest cycle closed 2026-05-21 — 37 deduplicated findings:
 | R9 | OWASP ZAP weekly scan, results in repo | ❌ | Day 2 of baseline track — GitHub Action template ready |
 | R10 | 1-page IR runbook published | ❌ | PR #5 — drafting from killswitch script as base |
 | R11 | ACR admin user disabled, MI `AcrPull` granted | ❌ | PR #5 — requires deploy script update + verification run |
-| R12 | KV purge protection enabled | ❌ | Day 2 — 5 min, but irreversible so doing it intentionally not casually |
+| R12 | KV purge protection enabled | ✅ | Verified 2026-05-26 — `enablePurgeProtection: true`, soft-delete retention 90d |
 | R13 | Entra client secret expiry alert | ❌ | PR #5 — weekly GitHub Action checking Microsoft Graph |
 
 Total effort end-to-end: ~3-4 working days (1-2 baseline + 5h PR #4 + 8h PR #5).
