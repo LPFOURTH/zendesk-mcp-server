@@ -53,7 +53,11 @@ class EntraValidator:
         self.jwks_uri = (
             f"https://login.microsoftonline.com/{tenant_id}/discovery/v2.0/keys"
         )
-        self._jwks_client = pyjwt.PyJWKClient(self.jwks_uri, cache_keys=True)
+        self._jwks_client = pyjwt.PyJWKClient(
+            self.jwks_uri,
+            cache_keys=True,
+            lifespan=300,
+        )
         print(
             f"[entra-auth] Validator ready (client={client_id[:8]}..., "
             f"tenant={tenant_id[:8]}...)",
@@ -106,6 +110,7 @@ class EntraValidator:
                 algorithms=["RS256"],
                 audience=valid_audiences,
                 issuer=self.valid_issuers,
+                leeway=30,
             )
             return decoded
         except pyjwt.ExpiredSignatureError:

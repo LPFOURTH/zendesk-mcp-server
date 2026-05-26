@@ -117,6 +117,47 @@ async def test_validate_rejects_expired_token(validator_with_mocked_jwks):
 
 
 @pytest.mark.asyncio
+async def test_validate_accepts_token_within_clock_skew_leeway(validator_with_mocked_jwks):
+    """Gap 1 fix: tokens expired by less than the configured leeway (30s) are accepted.
+
+    Distributed clock skew between Entra and the container can shift expiry by
+    seconds; without leeway, valid tokens get spurious 'expired' rejections.
+    """
+    v, private_pem = validator_with_mocked_jwks
+    token = _make_v2_token(
+        private_pem,
+        claims_override={"exp": int(time.time()) - 10, "iat": int(time.time()) - 60},
+    )
+    claims = await v.decode_and_get_claims(token)
+    assert claims is not None
+    assert claims["preferred_username"] == "alice@fourth.com"
+
+
+def test_jwks_client_constructed_with_explicit_lifespan(monkeypatch):
+    """Gap 2 fix: JWKS cache TTL is configured explicitly (300s), not inherited
+    from PyJWT's undocumented internal default.
+    """
+    from src import entra_auth
+
+    captured = {}
+
+    class _SpyPyJWKClient:
+        def __init__(self, uri, **kwargs):
+            captured["uri"] = uri
+            captured["kwargs"] = kwargs
+
+        def get_signing_key_from_jwt(self, token):
+            raise NotImplementedError
+
+    monkeypatch.setattr(entra_auth.pyjwt, "PyJWKClient", _SpyPyJWKClient)
+
+    entra_auth.EntraValidator(client_id=CLIENT_ID, tenant_id=TENANT_ID)
+
+    assert captured["kwargs"].get("cache_keys") is True
+    assert captured["kwargs"].get("lifespan") == 300
+
+
+@pytest.mark.asyncio
 async def test_validate_rejects_wrong_audience(validator_with_mocked_jwks):
     v, private_pem = validator_with_mocked_jwks
     token = _make_v2_token(private_pem, claims_override={"aud": "different-client"})
