@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+from typing import Annotated
+
+from pydantic import Field
 
 from ..attribution import apply_article_attribution, get_current_entra_email
 from ..zendesk_client import zendesk_client
@@ -64,8 +67,8 @@ async def get_article(id: int) -> str:  # pylint: disable=redefined-builtin
 
 
 async def create_article(  # pylint: disable=too-many-arguments,too-many-positional-arguments
-    title: str,
-    body: str,
+    title: Annotated[str, Field(max_length=200)],
+    body: Annotated[str, Field(max_length=50000)],
     section_id: int,
     locale: str | None = None,
     draft: bool | None = None,
@@ -120,9 +123,9 @@ async def create_article(  # pylint: disable=too-many-arguments,too-many-positio
 
 
 async def update_article(  # pylint: disable=redefined-builtin,too-many-arguments,too-many-positional-arguments
-    id: int,
-    title: str | None = None,
-    body: str | None = None,
+    id: int,  # noqa: A002
+    title: Annotated[str | None, Field(max_length=200)] = None,
+    body: Annotated[str | None, Field(max_length=50000)] = None,
     locale: str | None = None,
     draft: bool | None = None,
     permission_group_id: int | None = None,

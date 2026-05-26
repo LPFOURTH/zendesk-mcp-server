@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import re
+from typing import Annotated
+
+from pydantic import Field
 
 from ..zendesk_client import zendesk_client
 
@@ -132,7 +135,7 @@ def _trim_result(r: dict) -> dict:
 
 
 async def search(
-    query: str,
+    query: Annotated[str, Field(max_length=500)],
     scope: str | None = None,
     sort_by: str | None = None,
     sort_order: str | None = None,

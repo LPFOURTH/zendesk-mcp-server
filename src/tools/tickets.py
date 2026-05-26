@@ -6,7 +6,9 @@ import base64
 import json
 import os
 import sys
-from typing import Literal
+from typing import Annotated, Literal
+
+from pydantic import Field
 
 from ..constants import (
     IT_ACCESS_REQUEST_VALUES,
@@ -174,8 +176,8 @@ async def get_ticket(
 
 
 async def create_ticket(  # pylint: disable=too-many-arguments,too-many-positional-arguments
-    subject: str,
-    comment: str,
+    subject: Annotated[str, Field(max_length=200)],
+    comment: Annotated[str, Field(max_length=10000)],
     priority: str | None = None,
     status: str | None = None,
     assignee_id: int | None = None,
@@ -257,9 +259,9 @@ async def create_ticket(  # pylint: disable=too-many-arguments,too-many-position
 
 async def update_ticket(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     ticket_id: int | None = None,
-    id: int | None = None,  # pylint: disable=redefined-builtin
-    subject: str | None = None,
-    comment: str | None = None,
+    id: int | None = None,  # pylint: disable=redefined-builtin  # noqa: A002
+    subject: Annotated[str | None, Field(max_length=200)] = None,
+    comment: Annotated[str | None, Field(max_length=10000)] = None,
     internal_note: bool | None = None,
     priority: str | None = None,
     status: str | None = None,
@@ -481,8 +483,8 @@ def _build_it_custom_fields(  # pylint: disable=too-many-arguments,too-many-posi
 
 
 async def create_it_ticket(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches,too-many-statements
-    subject: str,
-    description: str,
+    subject: Annotated[str, Field(max_length=200)],
+    description: Annotated[str, Field(max_length=10000)],
     classification: Literal["incident", "service_request"],
     incident_category: (
         Literal[
@@ -867,7 +869,7 @@ async def create_it_ticket(  # pylint: disable=too-many-arguments,too-many-posit
         ]
         | None
     ) = None,
-    additional_location_info: str | None = None,
+    additional_location_info: Annotated[str | None, Field(max_length=5000)] = None,
     priority: Literal["low", "normal", "high", "urgent"] | None = None,
 ) -> str:
     """Create an IT Support Request ticket using the company's standard IT form.
