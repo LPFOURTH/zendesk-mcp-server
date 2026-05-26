@@ -57,11 +57,16 @@ def extract_request_context(headers: dict) -> dict:
 
 
 def set_request_context(ctx: dict) -> None:
-    if ctx.get("authorization") is not None:
-        authorization_var.set(ctx["authorization"])
-    if ctx.get("zendesk_subdomain") is not None:
-        zendesk_subdomain_var.set(ctx["zendesk_subdomain"])
-    if ctx.get("zendesk_base_url") is not None:
-        zendesk_base_url_var.set(ctx["zendesk_base_url"])
-    if ctx.get("zendesk_environment") is not None:
-        zendesk_environment_var.set(ctx["zendesk_environment"])
+    """Set every per-request contextvar.
+
+    AUDIT-003 fix: always call .set() — including to None when a key is
+    absent — so a stale value from a previous request can never leak into
+    the current request. The earlier guarded form (`if value is not None`)
+    left the prior request's value in place when the new request lacked
+    that header, which under stateless_http=True can mean User B sees
+    User A's Authorization.
+    """
+    authorization_var.set(ctx.get("authorization"))
+    zendesk_subdomain_var.set(ctx.get("zendesk_subdomain"))
+    zendesk_base_url_var.set(ctx.get("zendesk_base_url"))
+    zendesk_environment_var.set(ctx.get("zendesk_environment"))
