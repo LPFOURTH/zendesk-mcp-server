@@ -247,6 +247,61 @@ Container App `stdout` from `print(...)` calls in `src/server.py` and `src/zende
 
 ---
 
+## RISK-015 — No Continuous Access Evaluation (CAE) for Entra tokens
+
+**Severity:** Low-Medium (compliance / off-boarding latency)
+**Source:** Claude Sonnet 4.6 Entra deep-dive 2026-05-20 — Gap 4
+**Applies when:** `MCP_AUTH_MODE=entra` (Architecture F — currently dormant). NOT active risk on live revision `--0000111`.
+
+Entra access tokens are JWTs with a 60-90 minute lifetime. Once issued and validated by our `EntraValidator`, there is no mechanism today to learn that Entra has revoked the token mid-session — for example, because:
+- A Conditional Access policy fired
+- The user's Entra account was disabled
+- A Privileged Identity Management role review expired
+- An admin issued a global sign-out via `revokeSignInSessions`
+
+The industry standard mitigation is **Continuous Access Evaluation (CAE)**: the resource server (us) registers with Entra to receive real-time revocation events and rejects tokens that have been revoked even before their `exp`. CAE-capable clients in exchange receive long-lived tokens (up to 28 hours) because the server can revoke them immediately on demand.
+
+**Worst-case window:** A user disabled in Entra retains MCP access for up to the remaining token lifetime (~60 minutes). They cannot create or modify Zendesk records beyond what their cached Bearer permits.
+
+**Why accepted, not fixed:**
+- Implementing full CAE requires Entra app registration changes (declare CAE capability) + `claims_challenge` response handling + token-binding work. Estimated ~2 days of focused work.
+- 50-user internal tool with Zendesk's own RBAC as a second gate (Layer 3 in `SECURITY-OVERVIEW.md`).
+- Currently dormant — Architecture F not active. Only becomes a live risk if `MCP_AUTH_MODE=entra` is flipped back.
+
+**Mitigation (operational, today):**
+- When off-boarding a Fourth employee, the IT team should disable their Entra account AND their Zendesk agent account. Disabling Entra alone leaves a ~60 min residual window.
+- Document the cross-account off-boarding step in the standard leaver checklist.
+
+**Fix triggers:**
+- If `MCP_AUTH_MODE=entra` becomes live again AND we move past 200 users, CAE work justifies the cost.
+- If any compliance ask (SOC2, ISO 27001) lands.
+
+---
+
+## RISK-016 — Client-side connector metadata cache survives `MCP_AUTH_MODE` flips
+
+**Severity:** Medium (user-facing breakage, not a security gap per se)
+**Source:** 2026-05-26 Copilot Studio investigation
+**Still current:** Yes
+
+Copilot Studio caches the `/.well-known/oauth-authorization-server` metadata snapshot at the **MCP server registration** level (not at the connection level). When `MCP_AUTH_MODE` flips between `entra` and `zendesk` on our container, our server correctly switches the advertised `scopes_supported` value — but pre-existing Copilot Studio registrations retain the old cached scope and use it on subsequent OAuth flows.
+
+**Symptom observed 2026-05-26:** Copilot Studio sent `scope=access_as_user` (Entra scope) to `hotschedules.zendesk.com/oauth/authorizations/new` after the 2026-05-20 Arch F → Arch C revert. Zendesk rejected with "Invalid scope" because Stefan's OAuth client `mcp-server-copilot-prod` only allows `read` / `write`. New CONNECTIONS within the same registration did not refresh the cache.
+
+**Root cause:** Connector-level cache TTL is undocumented in Power Platform; appears to require full re-creation of the MCP server registration (not the connection) to bust.
+
+**Mitigations:**
+- Operational: when changing `MCP_AUTH_MODE`, document that Copilot Studio users may need to delete + re-add the MCP server registration in their agents.
+- Stop-gap: configure connector manually (not dynamic discovery) with the correct upstream OAuth fields when this happens.
+- Possible future: add a one-shot script to wipe stale DCR client records from Cosmos `oauth_state` container after every `MCP_AUTH_MODE` flip — forces Copilot Studio to re-register.
+
+**Why accepted:**
+- We don't expect frequent `MCP_AUTH_MODE` flips in steady state.
+- Forcing all users to re-register on every revision deploy is worse than the occasional cache-stale incident.
+- Path 2 (manual OAuth fallback) in operational notes provides a same-day workaround.
+
+---
+
 ## Historical risks (no longer active)
 
 | Risk | Was active | Resolved by |
