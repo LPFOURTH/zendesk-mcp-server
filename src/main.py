@@ -100,6 +100,49 @@ def _run_http() -> None:
     uvicorn.run(app, host=host, port=port, log_level="warning")
 
 
+_DEFAULT_CORS_ALLOWLIST = [
+    "https://claude.ai",
+    "https://*.claude.ai",
+    "https://copilotstudio.microsoft.com",
+    "https://*.copilotstudio.microsoft.com",
+    "https://global.consent.azure-apim.net",
+    "https://*.powerplatform.com",
+    "http://localhost:*",
+    "http://127.0.0.1:*",
+]
+
+
+def _parse_cors_origins(env_value: str) -> list[str]:
+    """Parse MCP_CORS_ORIGINS into an allowlist.
+
+    Empty / unset → safe default (Claude, Copilot Studio, Power Platform,
+    localhost). Literal `*` (alone or in the list) → wildcard mode
+    (killswitch — restores pre-AUDIT-005 behaviour for breakage during
+    rollout).
+    """
+    if not env_value:
+        return list(_DEFAULT_CORS_ALLOWLIST)
+    return [o.strip() for o in env_value.split(",") if o.strip()]
+
+
+def _origin_allowed(origin: str, allowlist: list[str]) -> bool:
+    """Whether an incoming Origin matches any allowlist entry.
+
+    Patterns support shell-style wildcards via fnmatch:
+        https://claude.ai             — exact
+        https://*.claude.ai           — any subdomain
+        http://localhost:*            — any port on localhost
+        *                             — wildcard killswitch
+    """
+    import fnmatch
+
+    if not origin:
+        return False
+    if "*" in allowlist:
+        return True
+    return any(fnmatch.fnmatchcase(origin, pattern) for pattern in allowlist)
+
+
 def _strip_caller_environment_headers(headers: dict) -> dict:
     """Remove any caller-controlled environment-routing headers from `headers`.
 
@@ -123,13 +166,16 @@ def _make_routing_middleware(parent_app, prod_app, dev_app):
     FastMCP v3 AzureProvider handles OAuth endpoints, OIDC discovery, and auth
     enforcement automatically — no manual proxy logic needed."""
 
-    CORS_HEADERS = [
-        (b"access-control-allow-origin", b"*"),
-        (b"access-control-expose-headers", b"Mcp-Session-Id"),
-    ]
+    # AUDIT-005: replace wildcard CORS with an env-configurable allowlist.
+    # MCP spec mandates origin validation to defend against DNS rebinding.
+    # Killswitch: MCP_CORS_ORIGINS=* restores pre-fix wildcard behaviour.
+    ALLOWED_ORIGINS = _parse_cors_origins(os.environ.get("MCP_CORS_ORIGINS", ""))
+    print(
+        f"[zendesk-mcp] CORS allowlist: {ALLOWED_ORIGINS}",
+        file=sys.stderr,
+    )
 
-    PREFLIGHT_HEADERS = [
-        (b"access-control-allow-origin", b"*"),
+    PREFLIGHT_BASE = [
         (b"access-control-allow-methods", b"GET, POST, DELETE, OPTIONS"),
         (
             b"access-control-allow-headers",
@@ -138,12 +184,27 @@ def _make_routing_middleware(parent_app, prod_app, dev_app):
             b"zendesk-subdomain, zendesk-base-url, zendesk-environment",
         ),
         (b"access-control-max-age", b"86400"),
+        (b"vary", b"Origin"),
     ]
 
     PREFIX_MAP = {
         "/mcp/prod": ("prod", prod_app),
         "/mcp/dev": ("dev", dev_app),
     }
+
+    def _resolve_cors_origin(scope_headers: list) -> str | None:
+        """Return the origin value to echo in Access-Control-Allow-Origin,
+        or None to skip CORS headers entirely (browser will block the call)."""
+        request_origin = ""
+        for k, v in scope_headers:
+            if k.decode("latin-1").lower() == "origin":
+                request_origin = v.decode("latin-1")
+                break
+        if "*" in ALLOWED_ORIGINS:
+            return "*"  # killswitch behaviour
+        if _origin_allowed(request_origin, ALLOWED_ORIGINS):
+            return request_origin
+        return None
 
     async def middleware(scope, receive, send):
         if scope["type"] != "http":
@@ -152,16 +213,28 @@ def _make_routing_middleware(parent_app, prod_app, dev_app):
 
         method = scope.get("method", "")
         path = scope.get("path", "")
+        allowed_origin = _resolve_cors_origin(scope.get("headers", []))
 
         if method == "OPTIONS":
-            await send({"type": "http.response.start", "status": 204, "headers": PREFLIGHT_HEADERS})
+            preflight_headers = list(PREFLIGHT_BASE)
+            if allowed_origin is not None:
+                preflight_headers.insert(0, (
+                    b"access-control-allow-origin",
+                    allowed_origin.encode("latin-1"),
+                ))
+            # If origin is not allowed, respond 204 without ACAO so browser blocks.
+            await send({"type": "http.response.start", "status": 204, "headers": preflight_headers})
             await send({"type": "http.response.body", "body": b""})
             return
 
         async def send_with_cors(message):
-            if message["type"] == "http.response.start":
+            if message["type"] == "http.response.start" and allowed_origin is not None:
                 existing = list(message.get("headers", []))
-                existing.extend(CORS_HEADERS)
+                existing.extend([
+                    (b"access-control-allow-origin", allowed_origin.encode("latin-1")),
+                    (b"access-control-expose-headers", b"Mcp-Session-Id"),
+                    (b"vary", b"Origin"),
+                ])
                 message = {**message, "headers": existing}
             await send(message)
 
