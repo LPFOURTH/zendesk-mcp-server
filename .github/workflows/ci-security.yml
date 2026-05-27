@@ -1,0 +1,137 @@
+name: CI — Security floor
+
+# Closes R7 from docs/SECURITY-OVERVIEW.md.
+# Five parallel checks gate every pull request + push to main / feature/*:
+#   tests       → pytest must pass (currently 243 tests)
+#   pip-audit   → Python dependency CVE scan, blocks on HIGH+
+#   bandit      → Python static security analysis, blocks on any finding
+#   gitleaks    → committed-secret scan, blocks on any finding
+#   trivy       → built container image vuln scan, blocks on HIGH+
+#
+# Defensive note on template injection:
+# Every `${{ }}` in this file is in a safe position — workflow config
+# (`matrix.python`), action input (`with: ...`), or `env:` block. There
+# are NO `${{ }}` patterns inside `run:` shell blocks. No injection vector.
+
+on:
+  pull_request:
+    branches: [main, "feature/**"]
+  push:
+    branches: [main, "feature/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+defaults:
+  run:
+    working-directory: zendesk-mcp-server
+
+jobs:
+  tests:
+    name: pytest
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+      - name: Run pytest
+        run: pytest tests/ -q --tb=short
+
+  pip-audit:
+    name: pip-audit (Python dep CVEs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install pip-audit
+        run: python -m pip install pip-audit
+      - name: Scan requirements.txt — strict, blocks on any CVE
+        run: |
+          pip-audit -r requirements.txt \
+            --vulnerability-service osv \
+            --strict \
+            --desc on
+
+  bandit:
+    name: bandit (Python static security)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install bandit
+        run: python -m pip install "bandit[toml,sarif]"
+      - name: Run bandit on src/ (excludes tests)
+        run: |
+          bandit -r src/ \
+            --severity-level medium \
+            --confidence-level medium \
+            --format json \
+            --output bandit-report.json
+      - name: Upload bandit JSON report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bandit-report
+          path: zendesk-mcp-server/bandit-report.json
+          retention-days: 30
+
+  gitleaks:
+    name: gitleaks (committed secrets)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  trivy:
+    name: trivy (container image vuln scan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build container image
+        run: docker build -t zendesk-mcp:ci .
+      - name: Run trivy — blocks on HIGH/CRITICAL
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: zendesk-mcp:ci
+          format: table
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          vuln-type: os,library
+      - name: Run trivy — SARIF for Security tab (advisory)
+        if: always()
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: zendesk-mcp:ci
+          format: sarif
+          output: trivy-results.sarif
+          severity: MEDIUM,HIGH,CRITICAL
+          ignore-unfixed: true
+      - name: Upload trivy SARIF to Security tab
+        if: always() && hashFiles('zendesk-mcp-server/trivy-results.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: zendesk-mcp-server/trivy-results.sarif
+          category: trivy-container
