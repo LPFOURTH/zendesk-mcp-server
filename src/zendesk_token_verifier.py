@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import sys
 import time
+from collections import OrderedDict
 
 import httpx
 from pydantic import AnyHttpUrl
@@ -45,40 +47,134 @@ class EntraOAuthProxy(AzureProvider):
         return self.resource_base_url or self.base_url
 
 
+_DEFAULT_POSITIVE_TTL = 300       # 5 min: successful validation stays cached
+_DEFAULT_NEGATIVE_TTL = 30        # 30 s: failed validation stays cached
+_DEFAULT_MAX_CACHE_ENTRIES = 10000  # LRU bound, shared across positive + negative
+
+
+def _int_env(name: str, default: int) -> int:
+    """Read a non-negative integer from env; fall back to default on parse failure."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+        return value if value >= 0 else default
+    except ValueError:
+        return default
+
+
 class ZendeskTokenVerifier(TokenVerifier):
     """Validates Zendesk opaque OAuth tokens by calling /api/v2/users/me.
 
-    Caches successful validations in memory with a configurable TTL to avoid
-    hitting the Zendesk API on every MCP tool call.
+    Two-layer cache (AUDIT-007 hardening):
+
+    - **Positive cache** — successful validations stored for cache_ttl_seconds
+      (default 300s). Avoids hitting Zendesk on every MCP tool call from a
+      legitimate user.
+    - **Negative cache** — failed validations stored for negative_cache_ttl_seconds
+      (default 30s). Defends against garbage-token spray DoS: an attacker
+      sending 1000 invalid tokens/sec would have hit Zendesk's /users/me
+      endpoint 1000 times before the fix; now only on the first attempt per
+      token, then cache short-circuits for 30s.
+
+    Both caches share an LRU bound (default 10k entries each). Excess entries
+    evict oldest-first via `OrderedDict.popitem(last=False)`. Prevents
+    memory exhaustion when the attacker sprays unique tokens (each one would
+    permanently allocate a cache entry without the bound).
+
+    Operational killswitches (env vars, no redeploy needed):
+      MCP_TOKEN_CACHE_NEGATIVE_TTL=0   disables negative caching (falls back
+                                       to pre-fix behaviour — hit Zendesk
+                                       on every invalid token)
+      MCP_TOKEN_CACHE_MAX=0            disables LRU bound (unbounded growth)
+      MCP_TOKEN_CACHE_POSITIVE_TTL=0   disables positive caching entirely
+
+    Cache keys are SHA-256(token)[:16] — token plaintext never sits in the
+    cache. Reduces blast radius if a crash dump or memory snapshot leaks.
     """
 
     def __init__(
         self,
         zendesk_subdomain: str,
-        cache_ttl_seconds: int = 300,
+        cache_ttl_seconds: int | None = None,
+        negative_cache_ttl_seconds: int | None = None,
+        max_cache_entries: int | None = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
         self._subdomain = zendesk_subdomain
-        self._cache_ttl = cache_ttl_seconds
-        self._cache: dict[str, tuple[AccessToken, float]] = {}
+        # Constructor args win; env vars override defaults; defaults are last resort.
+        self._cache_ttl = (
+            cache_ttl_seconds
+            if cache_ttl_seconds is not None
+            else _int_env("MCP_TOKEN_CACHE_POSITIVE_TTL", _DEFAULT_POSITIVE_TTL)
+        )
+        self._negative_cache_ttl = (
+            negative_cache_ttl_seconds
+            if negative_cache_ttl_seconds is not None
+            else _int_env("MCP_TOKEN_CACHE_NEGATIVE_TTL", _DEFAULT_NEGATIVE_TTL)
+        )
+        self._max_cache_entries = (
+            max_cache_entries
+            if max_cache_entries is not None
+            else _int_env("MCP_TOKEN_CACHE_MAX", _DEFAULT_MAX_CACHE_ENTRIES)
+        )
+        self._positive_cache: OrderedDict[str, tuple[AccessToken, float]] = OrderedDict()
+        self._negative_cache: OrderedDict[str, float] = OrderedDict()
         self._http = httpx.AsyncClient(timeout=10.0)
+
+    # ---- internal cache helpers ----
+
+    def _evict_expired(self, now: float) -> None:
+        """Drop expired entries from both caches. Cheap — runs every verify."""
+        expired_positive = [k for k, (_, exp) in self._positive_cache.items() if exp <= now]
+        for k in expired_positive:
+            del self._positive_cache[k]
+        expired_negative = [k for k, exp in self._negative_cache.items() if exp <= now]
+        for k in expired_negative:
+            del self._negative_cache[k]
+
+    def _set_positive(self, key: str, value: AccessToken, expires_at: float) -> None:
+        if self._cache_ttl == 0:
+            return
+        self._positive_cache[key] = (value, expires_at)
+        self._positive_cache.move_to_end(key)
+        if self._max_cache_entries:
+            while len(self._positive_cache) > self._max_cache_entries:
+                self._positive_cache.popitem(last=False)
+
+    def _set_negative(self, key: str, expires_at: float) -> None:
+        if self._negative_cache_ttl == 0:
+            return
+        self._negative_cache[key] = expires_at
+        self._negative_cache.move_to_end(key)
+        if self._max_cache_entries:
+            while len(self._negative_cache) > self._max_cache_entries:
+                self._negative_cache.popitem(last=False)
+
+    # ---- public API ----
 
     async def verify_token(self, token: str) -> AccessToken | None:
         cache_key = hashlib.sha256(token.encode()).hexdigest()[:16]
         now = time.time()
 
-        # Evict expired entries lazily
-        expired = [k for k, (_, exp) in self._cache.items() if exp <= now]
-        for k in expired:
-            del self._cache[k]
+        self._evict_expired(now)
 
-        # Cache hit
-        cached = self._cache.get(cache_key)
-        if cached and cached[1] > now:
-            return cached[0]
+        # Positive cache hit — valid user, skip the Zendesk round-trip.
+        positive = self._positive_cache.get(cache_key)
+        if positive and positive[1] > now:
+            self._positive_cache.move_to_end(cache_key)
+            return positive[0]
 
-        # Validate by calling Zendesk API
+        # Negative cache hit — already known-bad, skip the Zendesk round-trip.
+        # This is the DoS defense: 1000 garbage-token requests = 1 Zendesk call,
+        # not 1000.
+        negative_exp = self._negative_cache.get(cache_key)
+        if negative_exp and negative_exp > now:
+            return None
+
+        # Cache miss — actually ask Zendesk.
         try:
             resp = await self._http.get(
                 f"https://{self._subdomain}.zendesk.com/api/v2/users/me",
@@ -91,6 +187,7 @@ class ZendeskTokenVerifier(TokenVerifier):
                 f"[zendesk-token-verifier] Token validation failed: {exc}",
                 file=sys.stderr,
             )
+            self._set_negative(cache_key, now + self._negative_cache_ttl)
             return None
 
         access_token = AccessToken(
@@ -104,6 +201,5 @@ class ZendeskTokenVerifier(TokenVerifier):
                 "role": user["role"],
             },
         )
-
-        self._cache[cache_key] = (access_token, now + self._cache_ttl)
+        self._set_positive(cache_key, access_token, now + self._cache_ttl)
         return access_token
