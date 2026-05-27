@@ -24,10 +24,6 @@ permissions:
   contents: read
   security-events: write
 
-defaults:
-  run:
-    working-directory: zendesk-mcp-server
-
 jobs:
   tests:
     name: pytest
@@ -76,7 +72,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install bandit
-        run: python -m pip install "bandit[toml,sarif]"
+        run: python -m pip install 'bandit[toml]'
       - name: Run bandit on src/ (excludes tests)
         run: |
           bandit -r src/ \
@@ -89,7 +85,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: bandit-report
-          path: zendesk-mcp-server/bandit-report.json
+          path: bandit-report.json
           retention-days: 30
 
   gitleaks:
@@ -112,7 +108,7 @@ jobs:
       - name: Build container image
         run: docker build -t zendesk-mcp:ci .
       - name: Run trivy — blocks on HIGH/CRITICAL
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@master
         with:
           image-ref: zendesk-mcp:ci
           format: table
@@ -122,7 +118,7 @@ jobs:
           vuln-type: os,library
       - name: Run trivy — SARIF for Security tab (advisory)
         if: always()
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@master
         with:
           image-ref: zendesk-mcp:ci
           format: sarif
@@ -130,8 +126,8 @@ jobs:
           severity: MEDIUM,HIGH,CRITICAL
           ignore-unfixed: true
       - name: Upload trivy SARIF to Security tab
-        if: always() && hashFiles('zendesk-mcp-server/trivy-results.sarif') != ''
+        if: always() && hashFiles('trivy-results.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
-          sarif_file: zendesk-mcp-server/trivy-results.sarif
+          sarif_file: trivy-results.sarif
           category: trivy-container
