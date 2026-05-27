@@ -993,11 +993,33 @@ async def create_it_ticket(  # pylint: disable=too-many-arguments,too-many-posit
             if "content_base64" in att:
                 file_bytes = base64.b64decode(att["content_base64"])
             elif "url" in att:
+                # AUDIT-001 (CRITICAL): SSRF deny-list before fetching.
+                # Blocks IMDS, RFC1918, loopback, IPv6 ULA, etc. Killswitch:
+                # MCP_ATTACHMENT_URL_VALIDATION=permissive.
+                # See src/url_security.py.
+                from ..url_security import (  # pylint: disable=import-outside-toplevel
+                    DEFAULT_OUTBOUND_MAX_BYTES,
+                    validate_outbound_url,
+                )
                 import httpx as _httpx  # pylint: disable=import-outside-toplevel
+
+                safe_url = await validate_outbound_url(att["url"])
                 async with _httpx.AsyncClient(timeout=30.0) as _client:
-                    _resp = await _client.get(att["url"])
-                    _resp.raise_for_status()
-                    file_bytes = _resp.content
+                    async with _client.stream("GET", safe_url) as _resp:
+                        _resp.raise_for_status()
+                        # Cap response size at 10 MiB to defend against
+                        # decompression bombs and accidental huge attachments.
+                        chunks: list[bytes] = []
+                        total = 0
+                        async for chunk in _resp.aiter_bytes():
+                            total += len(chunk)
+                            if total > DEFAULT_OUTBOUND_MAX_BYTES:
+                                raise ValueError(
+                                    f"Attachment exceeds "
+                                    f"{DEFAULT_OUTBOUND_MAX_BYTES} bytes: {safe_url}"
+                                )
+                            chunks.append(chunk)
+                        file_bytes = b"".join(chunks)
             else:
                 raise ValueError(
                     f"Attachment must have 'content_base64' or 'url': {att}"
