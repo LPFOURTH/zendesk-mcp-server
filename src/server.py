@@ -647,6 +647,45 @@ ALL_TOOLS: list[dict[str, Any]] = [
 ]
 
 
+def _build_audit_middleware():
+    """Build a FastMCP StructuredLoggingMiddleware for per-tool-call audit logs.
+
+    R2 / AUDIT-004 (Layer 2 — Record everything). Each tool invocation
+    emits one JSON line on stderr (Container App → Log Analytics) with
+    tool name, status, latency, and payload size — but NOT payload content.
+    Per codex's 2026-05-20 brainstorm: log shapes, not bodies. Ticket
+    bodies / comments / search text are PII-adjacent; size + structure is
+    the right signal-to-cost balance at our scale.
+
+    Returns None when disabled via `MCP_AUDIT_LOG=disabled` (operational
+    killswitch — flips audit log off without redeploy if ingest cost
+    runs away or a downstream consumer breaks).
+    """
+    import logging  # pylint: disable=import-outside-toplevel
+
+    if os.environ.get("MCP_AUDIT_LOG", "").lower() == "disabled":
+        return None
+
+    from fastmcp.server.middleware.logging import (  # pylint: disable=import-outside-toplevel
+        StructuredLoggingMiddleware,
+    )
+
+    audit_logger = logging.getLogger("zendesk-mcp-audit")
+    audit_logger.setLevel(logging.INFO)
+    if not audit_logger.handlers:
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setLevel(logging.INFO)
+        audit_logger.addHandler(handler)
+        audit_logger.propagate = False
+
+    return StructuredLoggingMiddleware(
+        logger=audit_logger,
+        include_payloads=False,        # No ticket bodies, no comments, no search text
+        include_payload_length=True,   # Do log sizes/counts
+        methods=["tools/call"],        # Focus on the audit chain
+    )
+
+
 def _create_base_server(name_suffix: str = "", auth=None) -> FastMCP:
     config = _load_tools_config()
 
@@ -684,6 +723,24 @@ def _create_base_server(name_suffix: str = "", auth=None) -> FastMCP:
         kwargs["auth"] = auth
 
     mcp = FastMCP(**kwargs)
+
+    # Layer 2 audit log — every tool call emits a structured JSON line
+    # to stderr (-> Container App stdout -> Log Analytics). See
+    # _build_audit_middleware docstring for redaction policy and killswitch.
+    audit_mw = _build_audit_middleware()
+    if audit_mw is not None:
+        mcp.add_middleware(audit_mw)
+        print(
+            f"[zendesk-mcp{name_suffix}] Audit log middleware: ENABLED "
+            f"(StructuredLoggingMiddleware on tools/call, payload bodies redacted)",
+            file=sys.stderr,
+        )
+    else:
+        print(
+            f"[zendesk-mcp{name_suffix}] Audit log middleware: DISABLED "
+            f"via MCP_AUDIT_LOG=disabled",
+            file=sys.stderr,
+        )
 
     for tool_def in enabled_tools:
         fn = tool_def["fn"]
