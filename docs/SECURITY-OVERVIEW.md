@@ -27,7 +27,60 @@ A FastMCP server that lets AI agents (Claude Code, Copilot Studio, Cursor) read 
    Prod Zendesk hotschedules.zendesk.com   Prod Zendesk (user's own Bearer)
 ```
 
-Full interactive sequence diagram: `docs/zendesk-mcp-workflows.html` (open in a browser).
+## How the system works — step by step
+
+The interactive version lives at `docs/zendesk-mcp-workflows.html` (open in a browser to switch tabs between the three flows). Static snapshot of the OAuth-dance flow below:
+
+![Workflow sequence diagram — OAuth dance first connect](workflow-diagram.png)
+
+Three flows happen in this system. Each is summarised plain-English below.
+
+### Flow 1 — Signing in (the OAuth dance, first connect)
+
+What you experience: you click a tool in Claude Code / Copilot Studio for the first time, a browser tab opens, you sign into Zendesk, the tab closes, the tool runs. ~30 seconds total.
+
+What actually happens, in order:
+
+1. **The MCP client (Claude Code / Copilot) tries to call a tool without credentials.** Our server returns `401 Unauthorized` and includes a header telling the client where to find the sign-in instructions.
+2. **The client fetches the sign-in instructions** from `/.well-known/oauth-authorization-server` — a small metadata file that lists the scopes the server accepts (`read`, `write`) and the URLs for sign-in, token exchange, and registration.
+3. **The client registers itself** with our OAuth Proxy via Dynamic Client Registration — gets a unique `client_id` for this one Claude / Copilot installation. That registration is saved in Cosmos DB so the same client doesn't have to register again next time.
+4. **The client asks our OAuth Proxy to authorise the user**, providing a PKCE challenge (cryptographic proof that the same client will collect the token at the end — prevents man-in-the-middle hijack).
+5. **Our OAuth Proxy redirects the browser to Zendesk's sign-in page** (`hotschedules.zendesk.com/oauth/authorizations/new`). The user sees Zendesk's branding, not ours.
+6. **The user signs into Zendesk** with their agent credentials. Zendesk is the one authenticating, not us.
+7. **Zendesk redirects back to our server** with a one-time authorisation code.
+8. **Our server exchanges that code for a Zendesk Bearer token** by calling Zendesk's `/oauth/tokens` endpoint with our client secret (pulled fresh from Azure Key Vault). The Bearer is opaque (we can't read its contents).
+9. **Our server stores the encrypted Bearer in Cosmos DB.** Fernet encryption at the value level — even if someone exports the Cosmos container, they can't read the active sessions without the encryption key.
+10. **Our server redirects the browser back to the client** with our own one-time auth code.
+11. **The client exchanges that code with us** for an MCP access token (which is effectively the user's Zendesk Bearer wrapped in our protocol).
+12. **The client retries the original tool call**, this time with `Authorization: Bearer ...`. The server validates against Zendesk's `/users/me` once (5-min cache), confirms identity, dispatches the tool.
+
+After this, the Bearer is reused for ~7 days. The user doesn't see the sign-in page again.
+
+### Flow 2 — Creating an IT ticket (`create_it_ticket`, end-to-end write)
+
+Verified live on 2026-05-14 with ticket #6861982. Eight steps:
+
+1. **The client calls `create_it_ticket`** with subject, description, classification (incident or service request), category, impact, location, etc. The Bearer from Flow 1 rides along in the `Authorization` header.
+2. **Our server's tool handler validates the inputs** — checks that the category combination is internally consistent (e.g. an incident category can't have a service-request sub-field). Rejects with a clear error before any Zendesk call if anything mismatches.
+3. **The handler builds 21 custom fields** with the production IT-form field IDs (form `45108529620365`). This is the "shape" Zendesk expects for an IT ticket.
+4. **The handler calls `ZendeskClient.create_ticket()`.** No identity injection — under Architecture C the user's own Bearer rides through, so Zendesk attributes the ticket to them natively. (Under the dormant Architecture F we'd inject a `requester` field; that's gated off here.)
+5. **The HTTP client sends `POST /api/v2/tickets.json`** to Zendesk with the user's Bearer.
+6. **Zendesk creates the ticket and returns the payload** — `id`, `requester_id` (= the authenticated user), `created_at`, etc.
+7. **The handler builds a compact summary** for the LLM — just the ID, URL, subject, and form. Doesn't return the full Zendesk response (no schema-leak risk per AUDIT-006).
+8. **The MCP response goes back to Claude Code / Copilot Studio** as a display string. The user sees "Ticket #6861982 created. https://..."
+
+### Flow 3 — Listing tickets (`list_tickets`, read scoped by user)
+
+Six steps, simpler than the write flow because there's no input validation or attribution logic:
+
+1. **The client calls `list_tickets`** with pagination (`per_page: 25`). Bearer in the header.
+2. **Our tool handler is a thin wrapper** — no attribution helpers fire on read paths.
+3. **The HTTP client forwards the user's Bearer verbatim** to Zendesk. Our server doesn't downscope, doesn't substitute, doesn't combine — it's the user's request to Zendesk, passing through us.
+4. **Zendesk receives `GET /api/v2/tickets.json`** with the user's Bearer attached.
+5. **Zendesk applies role-based access control server-side.** An agent sees their queue; an end-user sees only their own requests; an admin sees all. Zendesk decides what the user is entitled to see — we don't.
+6. **The response comes back through our server unchanged**, just compacted to JSON for the LLM.
+
+This is why we say "Zendesk RBAC is the source of truth for what each user can do" — we don't re-implement that decision, we trust Zendesk to enforce it on every read.
 
 ## Authentication
 
@@ -107,23 +160,6 @@ Coverage matrix:
 | Azure infrastructure | Defender for Cloud · CIS Azure Foundations |
 | Secrets hygiene | gitleaks · Defender for KV |
 | Recovery | killswitch.sh |
-
----
-
-## Findings summary
-
-Latest cycle closed 2026-05-21 — 37 deduplicated findings:
-
-| Bucket | Count | Plan |
-|---|---|---|
-| 🔴 Critical (live Arch C) | 1 — SSRF in `create_it_ticket` | PR #4 |
-| 🟠 High (live Arch C) | 3 — contextvar leak, no audit log, token-cache DoS | PR #4 |
-| 🟡 Medium (live Arch C) | 4 — wildcard CORS, error body leak, env header, length caps | PR #4 |
-| 🟢 Low / Info | 6 | PR #5 |
-| 📋 Accepted (documented in LIMITATIONS.md) | 9 | n/a |
-| ⚪ Dormant (Arch E/F only) | 9 | Closed if those paths reactivate. 2 fixed already on `feature/security-entra-easy-wins`. |
-| ✅ Verified resolved | 2 | n/a |
-| ⭐ Opportunities (FastMCP idioms) | 2 | Defer |
 
 ---
 
