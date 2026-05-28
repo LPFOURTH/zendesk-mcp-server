@@ -5,7 +5,7 @@ name: CI — Security floor
 #   tests       → pytest must pass (currently 243 tests)
 #   pip-audit   → Python dependency CVE scan, blocks on HIGH+
 #   bandit      → Python static security analysis, blocks on any finding
-#   gitleaks    → committed-secret scan, blocks on any finding
+#   gitleaks    → changed-commit secret scan, blocks on any new finding
 #   trivy       → built container image vuln scan, blocks on HIGH+
 #
 # Defensive note on template injection:
@@ -22,6 +22,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
   security-events: write
 
 jobs:
@@ -91,14 +92,40 @@ jobs:
   gitleaks:
     name: gitleaks (committed secrets)
     runs-on: ubuntu-latest
+    env:
+      GITLEAKS_VERSION: v8.30.1
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Install gitleaks CLI
+        run: |
+          asset="gitleaks_${GITLEAKS_VERSION#v}_linux_x64.tar.gz"
+          checksums="gitleaks_${GITLEAKS_VERSION#v}_checksums.txt"
+          base_url="https://github.com/gitleaks/gitleaks/releases/download/${GITLEAKS_VERSION}"
+
+          curl -sSfL "${base_url}/${asset}" -o "${asset}"
+          curl -sSfL "${base_url}/${checksums}" -o "${checksums}"
+          sha256sum -c "${checksums}" --ignore-missing
+
+          mkdir -p "${RUNNER_TEMP}/gitleaks"
+          tar -xzf "${asset}" -C "${RUNNER_TEMP}/gitleaks" gitleaks
+          echo "${RUNNER_TEMP}/gitleaks" >> "${GITHUB_PATH}"
       - name: Run gitleaks
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          zero_sha="0000000000000000000000000000000000000000"
+          if [ -n "${GITHUB_BASE_REF:-}" ]; then
+            log_opts="origin/${GITHUB_BASE_REF}..HEAD"
+          else
+            before="$(jq -r '.before // empty' "${GITHUB_EVENT_PATH}")"
+            if [ -n "${before}" ] && [ "${before}" != "${zero_sha}" ]; then
+              log_opts="${before}..HEAD"
+            else
+              log_opts="-1"
+            fi
+          fi
+
+          gitleaks detect --source . --redact --no-banner --verbose --log-opts "${log_opts}"
 
   trivy:
     name: trivy (container image vuln scan)
@@ -127,6 +154,7 @@ jobs:
           ignore-unfixed: true
       - name: Upload trivy SARIF to Security tab
         if: always() && hashFiles('trivy-results.sarif') != ''
+        continue-on-error: true
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-results.sarif

@@ -36,7 +36,8 @@ def _run_http() -> None:
     from starlette.routing import Route
 
     port = int(os.environ.get("MCP_HTTP_PORT", "8000"))
-    host = os.environ.get("MCP_HTTP_HOST", "0.0.0.0")
+    # Azure Container Apps needs an all-interface bind unless MCP_HTTP_HOST overrides it.
+    host = os.environ.get("MCP_HTTP_HOST", "0.0.0.0")  # nosec B104
 
     health_body = json.dumps(
         {
