@@ -3,107 +3,267 @@ name: Build, Scan & Deploy Zendesk MCP Server
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version without leading v, for example 3.10.6"
+        required: true
+        type: string
+      deploy:
+        description: "Push to ACR and deploy to Azure Container Apps"
+        required: true
+        type: boolean
+        default: false
+      canary_wait_seconds:
+        description: "Seconds to hold at 10% traffic before promotion"
+        required: true
+        type: string
+        default: "120"
+
+permissions:
+  contents: read
 
 env:
   AZURE_RESOURCE_GROUP: fourth-ai-prod
   AZURE_CONTAINER_REGISTRY: fourthzendeskmcp
   AZURE_CONTAINER_APP: fourth-zendesk-mcp-server
-  AZURE_LOCATION: northeurope
 
 jobs:
   build-and-scan:
+    name: build and scan image
     runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+      version: ${{ steps.meta.outputs.version }}
+      revision_suffix: ${{ steps.meta.outputs.revision_suffix }}
+      should_deploy: ${{ steps.meta.outputs.should_deploy }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+      - name: Compute release metadata
+        id: meta
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          INPUT_DEPLOY: ${{ github.event.inputs.deploy }}
+        run: |
+          set -euo pipefail
 
-      - name: Install dependencies
-        run: npm ci
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            version="${GITHUB_REF_NAME#v}"
+            should_deploy="true"
+          else
+            version="$INPUT_VERSION"
+            should_deploy="$INPUT_DEPLOY"
+          fi
 
-      - name: Run npm audit
-        run: npm audit --audit-level=high
-        continue-on-error: true
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+[.][0-9]+[.][0-9]+([-.][0-9A-Za-z]+)?$'; then
+            echo "::error::version must look like 3.10.6 or 3.10.6-rc1"
+            exit 1
+          fi
 
-      - name: Extract version
-        id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+          safe_version=$(printf '%s' "$version" | tr '[:upper:]' '[:lower:]' | tr '.+' '--' | tr -cd 'a-z0-9-')
+          revision_suffix="v${safe_version}-${GITHUB_RUN_NUMBER}"
+          image="${AZURE_CONTAINER_REGISTRY}.azurecr.io/${AZURE_CONTAINER_APP}:${version}"
 
-      - name: Azure Login
-        uses: azure/login@v2
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          {
+            echo "version=$version"
+            echo "revision_suffix=$revision_suffix"
+            echo "image=$image"
+            echo "should_deploy=$should_deploy"
+          } >> "$GITHUB_OUTPUT"
 
-      - name: Login to ACR
-        run: az acr login --name ${{ env.AZURE_CONTAINER_REGISTRY }}
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          platforms: linux/amd64
-          push: true
-          tags: |
-            ${{ env.AZURE_CONTAINER_REGISTRY }}.azurecr.io/${{ env.AZURE_CONTAINER_APP }}:${{ steps.version.outputs.version }}
-            ${{ env.AZURE_CONTAINER_REGISTRY }}.azurecr.io/${{ env.AZURE_CONTAINER_APP }}:latest
-          cache-from: type=registry,ref=${{ env.AZURE_CONTAINER_REGISTRY }}.azurecr.io/${{ env.AZURE_CONTAINER_APP }}:buildcache
-          cache-to: type=registry,ref=${{ env.AZURE_CONTAINER_REGISTRY }}.azurecr.io/${{ env.AZURE_CONTAINER_APP }}:buildcache,mode=max
+      - name: Build Docker image
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: docker build -t "zendesk-mcp:${VERSION}" .
 
       - name: Trivy vulnerability scan
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: '${{ env.AZURE_CONTAINER_REGISTRY }}.azurecr.io/${{ env.AZURE_CONTAINER_APP }}:${{ steps.version.outputs.version }}'
-          format: 'table'
-          severity: 'CRITICAL,HIGH'
+          image-ref: zendesk-mcp:${{ steps.meta.outputs.version }}
+          format: table
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          vuln-type: os,library
 
-  deploy:
-    needs: build-and-scan
-    runs-on: ubuntu-latest
-    environment: production
-    steps:
-      - uses: actions/checkout@v4
+      - name: Check Azure deployment secret
+        if: steps.meta.outputs.should_deploy == 'true'
+        env:
+          AZURE_CREDENTIALS_JSON: ${{ secrets.AZURE_CREDENTIALS }}
+        run: |
+          set -euo pipefail
+          if [ -z "$AZURE_CREDENTIALS_JSON" ]; then
+            echo "::error::Missing repo secret AZURE_CREDENTIALS. Build/scan can run, but CD cannot push or deploy."
+            exit 1
+          fi
 
-      - name: Extract version
-        id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
-
-      - name: Azure Login
+      - name: Azure login
+        if: steps.meta.outputs.should_deploy == 'true'
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Deploy to Azure Container Apps
+      - name: Push image to ACR
+        if: steps.meta.outputs.should_deploy == 'true'
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+          VERSION: ${{ steps.meta.outputs.version }}
         run: |
-          DEPLOY_TIME=$(date +%s)
-          az containerapp update \
-            --name ${{ env.AZURE_CONTAINER_APP }} \
-            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
-            --image ${{ env.AZURE_CONTAINER_REGISTRY }}.azurecr.io/${{ env.AZURE_CONTAINER_APP }}:${{ steps.version.outputs.version }} \
-            --set-env-vars "DEPLOY_VERSION=${{ steps.version.outputs.version }}" "DEPLOY_TIME=${DEPLOY_TIME}" \
+          set -euo pipefail
+          az acr login --name "$AZURE_CONTAINER_REGISTRY"
+          docker tag "zendesk-mcp:${VERSION}" "$IMAGE"
+          docker tag "zendesk-mcp:${VERSION}" "${AZURE_CONTAINER_REGISTRY}.azurecr.io/${AZURE_CONTAINER_APP}:latest"
+          docker push "$IMAGE"
+          docker push "${AZURE_CONTAINER_REGISTRY}.azurecr.io/${AZURE_CONTAINER_APP}:latest"
+
+  deploy:
+    name: controlled Azure Container Apps rollout
+    needs: build-and-scan
+    runs-on: ubuntu-latest
+    environment: production
+    if: needs.build-and-scan.outputs.should_deploy == 'true'
+    env:
+      IMAGE: ${{ needs.build-and-scan.outputs.image }}
+      VERSION: ${{ needs.build-and-scan.outputs.version }}
+      REVISION_SUFFIX: ${{ needs.build-and-scan.outputs.revision_suffix }}
+      INPUT_CANARY_WAIT_SECONDS: ${{ github.event.inputs.canary_wait_seconds }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy, smoke test, and promote
+        run: |
+          set -euo pipefail
+
+          canary_wait="${INPUT_CANARY_WAIT_SECONDS:-120}"
+          if ! printf '%s' "$canary_wait" | grep -Eq '^[0-9]+$'; then
+            echo "::error::canary_wait_seconds must be numeric"
+            exit 1
+          fi
+
+          app="$AZURE_CONTAINER_APP"
+          rg="$AZURE_RESOURCE_GROUP"
+          new_revision="${app}--${REVISION_SUFFIX}"
+          current_revision=""
+
+          rollback() {
+            status=$?
+            if [ "$status" -ne 0 ] && [ -n "${current_revision:-}" ] && [ -n "${new_revision:-}" ]; then
+              echo "::warning::Deployment failed; rolling traffic back to ${current_revision}"
+              az containerapp ingress traffic set \
+                --name "$app" \
+                --resource-group "$rg" \
+                --revision-weight "${current_revision}=100" "${new_revision}=0" || true
+            fi
+            exit "$status"
+          }
+          trap rollback EXIT
+
+          current_revision=$(az containerapp revision list \
+            --name "$app" \
+            --resource-group "$rg" \
+            --query "sort_by([?properties.active && properties.trafficWeight > \`0\`], &properties.trafficWeight)[-1].name" \
+            -o tsv)
+
+          if [ -z "$current_revision" ]; then
+            current_revision=$(az containerapp revision list \
+              --name "$app" \
+              --resource-group "$rg" \
+              --query "[?properties.active] | [-1].name" \
+              -o tsv)
+          fi
+
+          if [ -z "$current_revision" ]; then
+            echo "::error::Could not determine current active revision"
+            exit 1
+          fi
+
+          public_fqdn=$(az containerapp show \
+            --name "$app" \
+            --resource-group "$rg" \
+            --query "properties.configuration.ingress.fqdn" \
+            -o tsv)
+
+          echo "Current revision: $current_revision"
+          echo "Candidate image:  $IMAGE"
+          echo "Candidate rev:    $new_revision"
+
+          az containerapp revision set-mode \
+            --name "$app" \
+            --resource-group "$rg" \
+            --mode multiple \
             --output none
 
-      - name: Verify deployment
-        run: |
-          sleep 30
-          FQDN=$(az containerapp show \
-            --name ${{ env.AZURE_CONTAINER_APP }} \
-            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
-            --query "properties.configuration.ingress.fqdn" -o tsv)
-          for i in $(seq 1 6); do
-            RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
-              "https://${FQDN}/health" \
-              --max-time 10) || true
-            if [ "$RESPONSE" = "200" ]; then
-              echo "Deployment verified - health check passed"
-              exit 0
+          # Pin public traffic to the current revision before creating the candidate.
+          az containerapp ingress traffic set \
+            --name "$app" \
+            --resource-group "$rg" \
+            --revision-weight "${current_revision}=100"
+
+          az containerapp update \
+            --name "$app" \
+            --resource-group "$rg" \
+            --image "$IMAGE" \
+            --revision-suffix "$REVISION_SUFFIX" \
+            --output none
+
+          for attempt in $(seq 1 30); do
+            health_state=$(az containerapp revision show \
+              --name "$app" \
+              --resource-group "$rg" \
+              --revision "$new_revision" \
+              --query "properties.healthState" \
+              -o tsv 2>/dev/null || true)
+
+            echo "Candidate health attempt ${attempt}: ${health_state:-unknown}"
+            if [ "$health_state" = "Healthy" ]; then
+              break
             fi
-            echo "Attempt $i: HTTP $RESPONSE, retrying in 20s..."
-            sleep 20
+            sleep 10
           done
-          echo "WARNING: Health check did not return 200 after 6 attempts"
-          exit 1
+
+          health_state=$(az containerapp revision show \
+            --name "$app" \
+            --resource-group "$rg" \
+            --revision "$new_revision" \
+            --query "properties.healthState" \
+            -o tsv)
+          if [ "$health_state" != "Healthy" ]; then
+            echo "::error::Candidate revision is ${health_state}, not Healthy"
+            exit 1
+          fi
+
+          revision_fqdn=$(az containerapp revision show \
+            --name "$app" \
+            --resource-group "$rg" \
+            --revision "$new_revision" \
+            --query "properties.fqdn" \
+            -o tsv)
+
+          curl -fsS --max-time 10 "https://${revision_fqdn}/health" >/dev/null
+
+          az containerapp ingress traffic set \
+            --name "$app" \
+            --resource-group "$rg" \
+            --revision-weight "${current_revision}=90" "${new_revision}=10"
+
+          echo "Holding canary at 10% for ${canary_wait}s"
+          sleep "$canary_wait"
+          curl -fsS --max-time 10 "https://${public_fqdn}/health" >/dev/null
+
+          az containerapp ingress traffic set \
+            --name "$app" \
+            --resource-group "$rg" \
+            --revision-weight "${current_revision}=0" "${new_revision}=100"
+
+          sleep 30
+          curl -fsS --max-time 10 "https://${public_fqdn}/health" >/dev/null
+
+          echo "Deployment verified: https://${public_fqdn}/health"
+          trap - EXIT

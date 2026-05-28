@@ -2,7 +2,7 @@
 
 > Internal Fourth tool. ~50 users. Live on Azure Container Apps. Updated 2026-05-27.
 > Active revision `--0000111` · image `v3.10.5` · `MCP_AUTH_MODE=zendesk` (Architecture C).
-> **Current state:** PR #4 ([fourth/zendesk-mcp-fourth#4](https://github.com/fourth/zendesk-mcp-fourth/pull/4)) is open with 14 commits closing all 8 active audit findings + the security CI floor. Code passes 243 tests. Awaiting review and `v3.10.6` deploy ceremony.
+> **Current state:** PR #4 ([fourth/zendesk-mcp-fourth#4](https://github.com/fourth/zendesk-mcp-fourth/pull/4)) is open, closes all 8 active audit findings, and has a green security CI floor. Code passes 243 tests. Awaiting review and `v3.10.6` deploy ceremony.
 
 ---
 
